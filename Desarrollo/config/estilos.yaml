@@ -1,0 +1,38 @@
+colores:
+  tramo_borde: "#7f1d1d"
+  tramo_centro: "#f4a3a8"
+  carretera_autovia: "#2d539e"
+  carretera_convencional: "#4a4a4a"
+  carretera_interior: "#ffffff"
+  pk_texto: "#303030"
+  pk_linea: "#333333"
+  marco: "#6a6a6a"
+
+elevaciones:
+  alpha_localizacion: 0.34
+  alpha_pendientes: 0.46
+  colores:
+    - "#f8fbf7"
+    - "#e5f1e3"
+    - "#c8e3c7"
+    - "#95cda3"
+    - "#64b280"
+    - "#3f8f63"
+
+pendientes:
+  colores:
+    muy_negativa: "#0571b0"
+    negativa: "#92c5de"
+    suave: "#f7f7f7"
+    positiva: "#df6f66"
+    muy_positiva: "#ca0020"
+  clases:
+    - [-999, -8, "Inferior a -8 %", "#053061"]
+    - [-8, -6, "-8 % a -6 %", "#2166ac"]
+    - [-6, -4, "-6 % a -4 %", "#4393c3"]
+    - [-4, -2, "-4 % a -2 %", "#92c5de"]
+    - [-2, 2, "-2 % a 2 %", "#f7f7f7"]
+    - [2, 4, "2 % a 4 %", "#df6f66"]
+    - [4, 6, "4 % a 6 %", "#c7434d"]
+    - [6, 8, "6 % a 8 %", "#b2182b"]
+    - [8, 999, "Superior a 8 %", "#67001f"]

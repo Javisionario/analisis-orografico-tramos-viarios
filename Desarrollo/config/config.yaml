@@ -1,0 +1,68 @@
+app:
+  host: "127.0.0.1"
+  port: 8025
+  debug: false
+
+paths:
+  outputs: "../Resultados"
+  cache_mdt: "cache/mdt"
+
+datos:
+  viario_gpkg: 'data\CalibradaBase.gpkg'
+  capa_lineas: "V\u00edasDGT_Calibrada"
+  capa_pks: "PK_2023"
+  limites_gpkg: 'data\LimitesAdministrativos.gpkg'
+  capa_ccaa: "CCAA"
+  capa_provincias: "Provincias"
+
+campos:
+  carretera_lineas: ["ID_ROAD"]
+  carretera_pks: ["MATRICULA"]
+  sentido_lineas: ["SENTIDO", "Via_sentido", "via_sentido"]
+  sentido_pks: ["SENTIDO"]
+  m_inicio: ["m_from", "pk_inicio"]
+  m_fin: ["m_to", "pk_fin"]
+  pk_punto: ["VALORKM", "VALORM"]
+  etiqueta_pk: ["LABEL", "PK+000", "VALORKM"]
+  cota_pk: ["COORD_Z"]
+  tipo_via: ["Tipo_via"]
+
+crs:
+  trabajo_epsg: 25830
+  canarias_epsg: 4083
+  geografico_epsg: 4326
+
+mdt:
+  wcs_url: "https://servicios.idee.es/wcs-inspire/mdt?VERSION=1.0.0"
+  timeout_s: 45
+  resoluciones_preferidas_m: [5, 25]
+  max_pixeles: 4000000
+  user_agent: "Analisis-Orografico/3.0.0"
+
+mapas:
+  dpi: 600
+  ancho_cm: 17.0
+  alto_cm: 12.0
+  margen_m_auto: 0.15
+  margen_m_min: 250
+  base: "ign_gris"
+  pk_intervalos_km: [1, 5, 10, 25, 50, 100]
+
+perfil:
+  intervalo_muestreo_auto_m: 75
+  intervalo_muestreo_min_ui_m: 20
+  intervalo_muestreo_max_ui_m: 250
+  suavizado_default: 4
+
+pendientes:
+  longitud_segmento_auto_m: 250
+  clases_base:
+    - [-999, -8]
+    - [-8, -6]
+    - [-6, -4]
+    - [-4, -2]
+    - [-2, 2]
+    - [2, 4]
+    - [4, 6]
+    - [6, 8]
+    - [8, 999]

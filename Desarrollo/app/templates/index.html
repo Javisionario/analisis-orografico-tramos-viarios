@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Herramienta de Análisis Orográfico de Tramos Viarios</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Herramienta de Análisis Orográfico de Tramos Viarios</h1>
+        <p>Define un tramo y genera mapas, perfiles longitudinales y datos auxiliares. <strong>{{ version }}</strong></p>
+      </div>
+    </header>
+
+    <main class="app-layout">
+      <aside class="sidebar">
+        <form id="generationForm" novalidate>
+          <details class="side-section" open>
+            <summary>Ámbito</summary>
+            <div class="section-body">
+              <label class="road-field">
+                <span>Carretera</span>
+                <div class="input-wrap">
+                  <input id="carretera" name="carretera" autocomplete="off" placeholder="Ma-2210" required>
+                  <button id="clearRoad" class="clear-input" type="button" aria-label="Limpiar carretera">×</button>
+                </div>
+                <div id="roadSuggestions" class="suggestions" hidden></div>
+                <p id="roadMessage" class="field-message"></p>
+              </label>
+
+              <label>
+                <span>Sentido</span>
+                <select name="sentido" id="sentido">
+                  <option value="creciente">Creciente</option>
+                  <option value="decreciente">Decreciente</option>
+                  <option value="ambos">Ambos</option>
+                </select>
+              </label>
+
+              <div class="grid two">
+                <label>
+                  <span>PK inicio</span>
+                  <input id="pkInicio" name="pk_inicio" type="number" step="0.001" placeholder="1.000" required>
+                </label>
+                <label>
+                  <span>PK fin</span>
+                  <input id="pkFin" name="pk_fin" type="number" step="0.001" placeholder="6.000" required>
+                </label>
+              </div>
+              <div id="pkWarnings" class="warnings" hidden></div>
+            </div>
+          </details>
+
+          <details class="side-section" open>
+            <summary>Configuración de entrada</summary>
+            <div class="section-body">
+              <label class="slider">
+                <span>Intervalo de muestreo altimétrico <strong id="sampleValue">75 m</strong></span>
+                <input id="intervaloMuestreo" name="intervalo_muestreo_m" type="range" min="20" max="250" step="5" value="75">
+                <em id="sampleHelp">Mínimo 4x tamaño del píxel del MDT.</em>
+              </label>
+
+              <label class="slider">
+                <span>Suavizado de elevaciones <strong id="smoothValue">4/10</strong></span>
+                <input id="suavizado" name="suavizado_elevaciones" type="range" min="0" max="10" step="1" value="4">
+                <em id="smoothHelp">Reduce ruido de la cota del perfil.</em>
+              </label>
+
+              <label class="slider">
+                <span>Suavizado de pendientes <strong id="slopeSmoothValue">4/10</strong></span>
+                <input id="suavizadoPendientes" name="suavizado_pendientes" type="range" min="0" max="10" step="1" value="4">
+                <em id="slopeSmoothHelp">Reduce ruido de la pendiente sin modificar la cota.</em>
+              </label>
+
+              <label class="slider">
+                <span>Umbral de pendiente anómala <strong id="anomalyValue">20 %</strong></span>
+                <input id="umbralAnomalia" name="umbral_pendiente_anomala_pct" type="range" min="5" max="40" step="0.5" value="20">
+                <em id="anomalyHelp">Pendientes con valor superior a 20 % son omitidas.</em>
+              </label>
+
+              <details class="nested-section smooth-advanced">
+                <summary>Suavizado avanzado de elevaciones</summary>
+                <div class="section-body compact">
+                  <label class="check"><input id="sgAdvanced" name="suavizado_elevaciones_avanzado" type="checkbox"> Suavizado Savitzky-Golay avanzado (Elevaciones)</label>
+                  <div id="sgAdvancedControls" class="advanced-controls">
+                    <label class="slider">
+                      <span>Ventana Savitzky-Golay <strong id="sgWindowValue">9 puntos · 675 m</strong></span>
+                      <input id="sgWindow" name="sg_elevaciones_window_puntos" type="range" min="3" max="55" step="2" value="13">
+                    </label>
+                    <label class="slider">
+                      <span>Valor polinómico <strong id="sgPolyorderValue">Polinomio 2</strong></span>
+                      <input id="sgPolyorder" name="sg_elevaciones_polyorder_visual" type="range" min="1" max="4" step="1" value="3">
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+              <details class="nested-section smooth-advanced">
+                <summary>Suavizado avanzado de pendientes</summary>
+                <div class="section-body compact">
+                  <label class="check"><input id="sgSlopeAdvanced" name="suavizado_pendientes_avanzado" type="checkbox"> Suavizado Savitzky-Golay avanzado (Pendientes)</label>
+                  <div id="sgSlopeAdvancedControls" class="advanced-controls">
+                    <label class="slider">
+                      <span>Ventana Savitzky-Golay <strong id="sgSlopeWindowValue">13 puntos · 975 m</strong></span>
+                      <input id="sgSlopeWindow" name="sg_pendientes_window_puntos" type="range" min="3" max="55" step="2" value="13">
+                    </label>
+                    <label class="slider">
+                      <span>Valor polinÃ³mico <strong id="sgSlopePolyorderValue">Polinomio 2</strong></span>
+                      <input id="sgSlopePolyorder" name="sg_pendientes_polyorder_visual" type="range" min="1" max="4" step="1" value="3">
+                    </label>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </details>
+
+          <details class="side-section" open>
+            <summary>Configuración de salida</summary>
+            <div class="section-body">
+              <label>
+                <span>Origen del eje de elevación</span>
+                <select name="modo_eje_y" id="modoEjeY">
+                  <option value="cero" selected>Origen en 0 m</option>
+                  <option value="adaptado">Origen adaptado</option>
+                </select>
+                <em>Define si el perfil parte de 0 m o se ajusta al rango altitudinal.</em>
+              </label>
+
+              <label>
+                <span>Segmento pendiente (m)</span>
+                <select name="longitud_intervalo_pendiente_m">
+                  <option value="">Auto</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                  <option value="1000">1000</option>
+                </select>
+                <em>Longitud de los segmentos usados en el mapa de pendientes.</em>
+              </label>
+
+              <label>
+                <span>Vías de fondo</span>
+                <select name="vias_fondo_modo" id="viasFondoModo">
+                  <option value="todas" selected>Todas las carreteras</option>
+                  <option value="autovias">Solo autovías</option>
+                  <option value="ambito">Solo la vía del ámbito</option>
+                  <option value="ninguna">Ninguna</option>
+                </select>
+                <em>Vías que se muestran como contexto en el mapa.</em>
+              </label>
+
+              <label>
+                <span>Mapa base</span>
+                <select name="mapa_base" id="mapaBase">
+                  <option value="ign_gris" selected>Callejero gris (IGN)</option>
+                  <option value="carto_positron">CARTO Positron</option>
+                </select>
+              </label>
+
+              <label id="cartoApiKeyField" hidden>
+                <span>API key de CARTO</span>
+                <div style="display: flex; gap: 6px;">
+                  <input name="carto_api_key" id="cartoApiKey" type="password" autocomplete="off" style="flex: 1; min-width: 0;">
+                  <button id="mostrarCartoApiKey" type="button">Mostrar</button>
+                </div>
+                <span id="cartoApiKeyStatus" class="field-message" hidden>API key guardada en este equipo</span>
+                <button id="olvidarCartoApiKey" type="button" hidden>Olvidar API key</button>
+              </label>
+              <label id="recordarCartoApiKeyField" class="plain-check" hidden><input name="recordar_carto_api_key" id="recordarCartoApiKey" type="checkbox"> Recordar en este equipo</label>
+
+              <label class="plain-check"><input name="mostrar_linea_muestreada_elevaciones" type="checkbox"> Mostrar línea muestreada de elevaciones</label>
+
+              <details class="nested-section">
+                <summary>Configuración de PKs</summary>
+                <div class="section-body compact pk-config">
+                  <label>
+                    <span>Modo</span>
+                    <select name="pk_modo" id="pkModo">
+                      <option value="automatico" selected>Automático</option>
+                      <option value="manual">Manual</option>
+                      <option value="no_mostrar">No mostrar PKs</option>
+                    </select>
+                  </label>
+                  <p id="pkAutoHelp" class="field-message">Automático: símbolo y etiqueta según longitud del tramo.</p>
+                  <div class="grid two pk-sliders" id="pkManualControls">
+                    <label class="slider">
+                      <span>Símbolo cada <strong id="pkSimboloCadaValue">1 km</strong></span>
+                      <input name="pk_simbolo_cada" id="pkSimboloCada" type="range" min="0" max="6" step="1" value="0">
+                    </label>
+                    <label class="slider">
+                      <span>Etiqueta cada <strong id="pkEtiquetaCadaValue">5 km</strong></span>
+                      <input name="pk_etiqueta_cada" id="pkEtiquetaCada" type="range" min="0" max="6" step="1" value="1">
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+              <details class="nested-section">
+                <summary>Avanzado</summary>
+                <div class="section-body compact">
+                  <label>
+                    <span>Resolución MDT</span>
+                    <select name="resolucion_mdt" id="resolucionMdt">
+                      <option value="5" selected>5 m</option>
+                      <option value="25">25 m</option>
+                    </select>
+                  </label>
+                  <label class="plain-check"><input name="mostrar_anotaciones_curvas_nivel" type="checkbox" checked> Mostrar anotaciones de líneas de nivel</label>
+                  <label class="slider">
+                    <span>Transparencia elevaciones en mapa de localización <strong id="alphaLocalizacionValue">34 %</strong></span>
+                    <input name="alpha_elev_localizacion" id="alphaLocalizacion" type="range" min="0" max="1" step="0.01" value="0.34">
+                    <em>0 % invisible · 100 % opaco</em>
+                  </label>
+                  <label class="slider">
+                    <span>Transparencia elevaciones en mapa de pendientes <strong id="alphaPendientesValue">46 %</strong></span>
+                    <input name="alpha_elev_pendientes" id="alphaPendientes" type="range" min="0" max="1" step="0.01" value="0.46">
+                    <em>0 % invisible · 100 % opaco</em>
+                  </label>
+                </div>
+              </details>
+            </div>
+          </details>
+
+          <details class="side-section" open>
+            <summary>Salidas</summary>
+            <div class="section-body check-list">
+              <label class="check"><input name="generar_mapa_localizacion" type="checkbox" checked> Mapa de localización</label>
+              <label class="check"><input name="generar_mapa_pendientes" type="checkbox" checked> Mapa de pendientes</label>
+              <label class="check"><input name="generar_perfil" type="checkbox" checked> Perfiles longitudinales</label>
+              <label class="check"><input name="generar_datos_auxiliares" type="checkbox"> Datos auxiliares</label>
+            </div>
+          </details>
+
+          <button class="primary" type="submit">Generar</button>
+        </form>
+      </aside>
+
+      <section class="results-panel">
+        <div class="status" id="status">
+          <h2>Resultados</h2>
+          <p>Define un ámbito y genera los mapas para ver los resultados aquí.</p>
+        </div>
+        <div id="zipDownloads" class="zip-downloads"></div>
+        <div id="results" class="results"></div>
+      </section>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,1106 @@
+const form = document.querySelector("#generationForm");
+const statusBox = document.querySelector("#status");
+const roadInput = document.querySelector("#carretera");
+const clearRoad = document.querySelector("#clearRoad");
+const suggestionsBox = document.querySelector("#roadSuggestions");
+const roadMessage = document.querySelector("#roadMessage");
+const pkWarnings = document.querySelector("#pkWarnings");
+const resultsBox = document.querySelector("#results");
+const zipDownloads = document.querySelector("#zipDownloads");
+const smooth = document.querySelector("#suavizado");
+const smoothValue = document.querySelector("#smoothValue");
+const smoothHelp = document.querySelector("#smoothHelp");
+const slopeSmooth = document.querySelector("#suavizadoPendientes");
+const slopeSmoothValue = document.querySelector("#slopeSmoothValue");
+const slopeSmoothHelp = document.querySelector("#slopeSmoothHelp");
+const sample = document.querySelector("#intervaloMuestreo");
+const sampleValue = document.querySelector("#sampleValue");
+const sampleHelp = document.querySelector("#sampleHelp");
+const resolutionMdt = document.querySelector("#resolucionMdt");
+const anomaly = document.querySelector("#umbralAnomalia");
+const anomalyValue = document.querySelector("#anomalyValue");
+const anomalyHelp = document.querySelector("#anomalyHelp");
+const modoEjeY = document.querySelector("#modoEjeY");
+const viasFondoModo = document.querySelector("#viasFondoModo");
+const mapaBase = document.querySelector("#mapaBase");
+const cartoApiKeyField = document.querySelector("#cartoApiKeyField");
+const cartoApiKey = document.querySelector("#cartoApiKey");
+const cartoApiKeyStatus = document.querySelector("#cartoApiKeyStatus");
+const recordarCartoApiKeyField = document.querySelector("#recordarCartoApiKeyField");
+const mostrarCartoApiKey = document.querySelector("#mostrarCartoApiKey");
+const olvidarCartoApiKey = document.querySelector("#olvidarCartoApiKey");
+const pkModo = document.querySelector("#pkModo");
+const pkManualControls = document.querySelector("#pkManualControls");
+const pkSimboloCada = document.querySelector("#pkSimboloCada");
+const pkEtiquetaCada = document.querySelector("#pkEtiquetaCada");
+const pkSimboloCadaValue = document.querySelector("#pkSimboloCadaValue");
+const pkEtiquetaCadaValue = document.querySelector("#pkEtiquetaCadaValue");
+const pkAutoHelp = document.querySelector("#pkAutoHelp");
+const sgAdvanced = document.querySelector("#sgAdvanced");
+const sgAdvancedControls = document.querySelector("#sgAdvancedControls");
+const sgWindow = document.querySelector("#sgWindow");
+const sgWindowValue = document.querySelector("#sgWindowValue");
+const sgPolyorder = document.querySelector("#sgPolyorder");
+const sgPolyorderValue = document.querySelector("#sgPolyorderValue");
+const sgSlopeAdvanced = document.querySelector("#sgSlopeAdvanced");
+const sgSlopeAdvancedControls = document.querySelector("#sgSlopeAdvancedControls");
+const sgSlopeWindow = document.querySelector("#sgSlopeWindow");
+const sgSlopeWindowValue = document.querySelector("#sgSlopeWindowValue");
+const sgSlopePolyorder = document.querySelector("#sgSlopePolyorder");
+const sgSlopePolyorderValue = document.querySelector("#sgSlopePolyorderValue");
+const alphaLocalizacion = document.querySelector("#alphaLocalizacion");
+const alphaPendientes = document.querySelector("#alphaPendientes");
+const alphaLocalizacionValue = document.querySelector("#alphaLocalizacionValue");
+const alphaPendientesValue = document.querySelector("#alphaPendientesValue");
+
+let selectedRoad = null;
+let roadCache = null;
+let roadLoading = null;
+let loadingTimer = null;
+let loadingStartedAt = null;
+let lastProgress = null;
+const SUGGESTION_LIMIT = 90;
+const PK_INTERVALS = [1, 5, 10, 25, 50, 100, 250];
+const PROGRESS_PHASES = [
+  "Preparando el tramo de estudio.",
+  "Leyendo carretera y PKs.",
+  "Cargando modelo digital del terreno.",
+  "Muestreando cotas sobre la vía.",
+  "Calculando pendientes.",
+  "Generando perfil longitudinal.",
+  "Componiendo mapa de localización.",
+  "Componiendo mapa de pendientes.",
+  "Preparando archivos de descarga.",
+  "Finalizando resultados.",
+];
+const SG_TABLE = {
+  0: { window: 0, polyorder: 0, label: "sin suavizado" },
+  1: { window: 3, polyorder: 4, label: "efecto muy leve" },
+  2: { window: 5, polyorder: 3, label: "leve" },
+  3: { window: 9, polyorder: 3, label: "leve-medio" },
+  4: { window: 13, polyorder: 2, label: "medio-bajo" },
+  5: { window: 17, polyorder: 2, label: "medio" },
+  6: { window: 21, polyorder: 2, label: "medio-alto" },
+  7: { window: 27, polyorder: 2, label: "alto" },
+  8: { window: 33, polyorder: 2, label: "alto estable" },
+  9: { window: 41, polyorder: 1, label: "muy alto" },
+  10: { window: 51, polyorder: 1, label: "muy suavizado" },
+};
+const CARTO_API_KEY_MASK = "••••••••••••••••";
+let cartoStoredKeyAvailable = false;
+let cartoShowPressed = false;
+
+function setStatus(title, text) {
+  statusBox.innerHTML = `<h2>${title}</h2><p>${text}</p>`;
+}
+
+function formatElapsed(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function stopLoadingClock() {
+  if (loadingTimer) clearInterval(loadingTimer);
+  loadingTimer = null;
+}
+
+function renderLoading(job = {}) {
+  const index = Number(job.fase_indice || 1);
+  const total = Number(job.fases_total || PROGRESS_PHASES.length);
+  const percent = Math.max(4, Math.min(100, Math.round((index / total) * 100)));
+  const elapsed = job.tiempo_transcurrido_s ?? (loadingStartedAt ? (performance.now() - loadingStartedAt) / 1000 : 0);
+  const phase = job.fase || PROGRESS_PHASES[Math.max(0, index - 1)] || "Preparando generación.";
+  const details = PROGRESS_PHASES.map((item, idx) => {
+    const state = idx + 1 < index ? "done" : idx + 1 === index ? "active" : "";
+    return `<li class="${state}"><span>${idx + 1}</span>${item}</li>`;
+  }).join("");
+  statusBox.innerHTML = `
+    <div class="loading-card">
+      <div class="loading-head">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <h2>Generando resultados</h2>
+          <p>${phase}</p>
+        </div>
+        <strong>${formatElapsed(elapsed)}</strong>
+      </div>
+      <div class="progress-track"><div style="width:${percent}%"></div></div>
+      <ol class="progress-steps">${details}</ol>
+      <p class="loading-note">${job.detalle || "La herramienta está componiendo mapas, perfil y archivos de descarga."}</p>
+    </div>
+  `;
+}
+
+function normalizeRoad(value) {
+  return String(value || "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+}
+
+function normalizedPrefix(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function boolField(data, name) {
+  return data.get(name) === "on";
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatPk(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  let km = Math.floor(abs);
+  let m = Math.round((abs - km) * 1000);
+  if (m >= 1000) {
+    km += 1;
+    m -= 1000;
+  }
+  return `${sign}${km}+${String(m).padStart(3, "0")}`;
+}
+
+function showWarnings(items) {
+  const clean = items.filter(Boolean);
+  pkWarnings.hidden = clean.length === 0;
+  pkWarnings.innerHTML = clean.map((item) => `<p>${item}</p>`).join("");
+}
+
+async function loadRoads() {
+  if (roadCache) return roadCache;
+  if (!roadLoading) {
+    const start = performance.now();
+    roadLoading = fetch("/api/carreteras")
+      .then((response) => {
+        if (!response.ok) throw new Error("No se pudo consultar carreteras");
+        return response.json();
+      })
+      .then((data) => {
+        const items = (data.items || []).map((item) => ({
+          ...item,
+          normalizado: item.normalizado || normalizeRoad(item.carretera),
+        }));
+        console.info(`Carreteras cargadas: ${items.length}/${data.total ?? items.length} en ${Math.round(performance.now() - start)} ms`);
+        return items;
+      });
+  }
+  roadCache = await roadLoading;
+  return roadCache;
+}
+
+function filterRoads(q) {
+  const query = normalizeRoad(q);
+  const roads = roadCache || [];
+  if (!query) return roads;
+  const rawQuery = normalizedPrefix(q);
+  return roads
+    .filter((item) => String(item.normalizado || normalizeRoad(item.carretera)).includes(query))
+    .sort((a, b) => roadRank(a, query, rawQuery) - roadRank(b, query, rawQuery) || String(a.carretera).localeCompare(String(b.carretera), "es"));
+}
+
+function roadRank(item, query, rawQuery) {
+  const original = normalizedPrefix(item.carretera);
+  const norm = String(item.normalizado || normalizeRoad(item.carretera));
+  if (norm === query) return 0;
+  if (original.startsWith(rawQuery)) return 1;
+  if (norm.startsWith(query)) return 2;
+  if (original.includes(rawQuery)) return 3;
+  if (norm.includes(query)) return 4;
+  return 5;
+}
+
+function roadExact(value) {
+  const target = normalizeRoad(value);
+  return (roadCache || []).find((item) => String(item.normalizado || normalizeRoad(item.carretera)) === target) || null;
+}
+
+function selectRoad(item) {
+  selectedRoad = item;
+  roadInput.value = item.carretera;
+  roadMessage.textContent = item.pk_min !== undefined ? `Rango real ${formatPk(item.pk_min)} a ${formatPk(item.pk_max)}` : "";
+  roadMessage.className = "field-message ok";
+  suggestionsBox.hidden = true;
+  clearRoad.classList.add("visible");
+  validateMainPk();
+}
+
+function renderSuggestions(items, q) {
+  suggestionsBox.innerHTML = "";
+  const shown = items.slice(0, SUGGESTION_LIMIT);
+  if (!shown.length) {
+    suggestionsBox.innerHTML = `<div class="suggestion-empty">${q ? "No hay coincidencias" : "No hay carreteras disponibles"}</div>`;
+    suggestionsBox.hidden = false;
+    return;
+  }
+  for (const item of shown) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggestion";
+    button.innerHTML = `<strong>${item.carretera}</strong><span>${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}</span>`;
+    button.addEventListener("click", () => selectRoad(item));
+    suggestionsBox.appendChild(button);
+  }
+  if (items.length > shown.length) {
+    const more = document.createElement("div");
+    more.className = "suggestion-empty";
+    more.textContent = `Mostrando ${shown.length} de ${items.length} coincidencias. Sigue escribiendo para afinar.`;
+    suggestionsBox.appendChild(more);
+  }
+  suggestionsBox.hidden = false;
+}
+
+async function refreshRoadSuggestions() {
+  const q = roadInput.value.trim();
+  clearRoad.classList.toggle("visible", q.length > 0);
+  selectedRoad = selectedRoad && normalizeRoad(selectedRoad.carretera) === normalizeRoad(q) ? selectedRoad : null;
+  roadMessage.className = "field-message";
+  try {
+    await loadRoads();
+    renderSuggestions(filterRoads(q), q);
+    const exact = roadExact(q);
+    if (exact) {
+      selectedRoad = exact;
+      roadMessage.textContent = `Rango real ${formatPk(exact.pk_min)} a ${formatPk(exact.pk_max)}`;
+      roadMessage.className = "field-message ok";
+    } else if (q && filterRoads(q).length === 0) {
+      roadMessage.textContent = "Carretera no encontrada";
+      roadMessage.className = "field-message error";
+    } else if (q) {
+      roadMessage.textContent = "Selecciona una carretera de la lista";
+    } else {
+      roadMessage.textContent = "";
+    }
+  } catch (error) {
+    roadMessage.textContent = String(error.message || error);
+    roadMessage.className = "field-message error";
+  }
+}
+
+function clearRoadField() {
+  roadInput.value = "";
+  selectedRoad = null;
+  roadMessage.textContent = "";
+  roadMessage.className = "field-message";
+  suggestionsBox.hidden = true;
+  clearRoad.classList.remove("visible");
+  showWarnings([]);
+  roadInput.focus();
+  refreshRoadSuggestions();
+}
+
+async function ensureSelectedRoad() {
+  await loadRoads();
+  if (selectedRoad && normalizeRoad(selectedRoad.carretera) === normalizeRoad(roadInput.value)) return selectedRoad;
+  const exact = roadExact(roadInput.value);
+  if (!exact) {
+    roadMessage.textContent = "No se puede generar: carretera inexistente";
+    roadMessage.className = "field-message error";
+    throw new Error("Carretera inexistente");
+  }
+  selectRoad(exact);
+  return exact;
+}
+
+async function rangeForCurrentRoad() {
+  const road = await ensureSelectedRoad();
+  const params = new URLSearchParams({
+    carretera: road.carretera,
+    sentido: document.querySelector("#sentido").value,
+  });
+  const pkInicio = numberOrNull(document.querySelector("#pkInicio").value);
+  const pkFin = numberOrNull(document.querySelector("#pkFin").value);
+  if (pkInicio !== null) params.set("pk_inicio", pkInicio);
+  if (pkFin !== null) params.set("pk_fin", pkFin);
+  const response = await fetch(`/api/rango-carretera?${params.toString()}`);
+  if (!response.ok) throw new Error((await response.json()).detail || "No se pudo validar rango");
+  return response.json();
+}
+
+async function validateMainPk(apply = false) {
+  if (!roadInput.value.trim()) return null;
+  try {
+    const data = await rangeForCurrentRoad();
+    const warnings = [];
+    for (const item of data.ajustes || []) {
+      if (item.advertencia) {
+        warnings.push(item.advertencia);
+        if (apply) {
+          const field = item.campo === "pk_inicio" ? document.querySelector("#pkInicio") : document.querySelector("#pkFin");
+          field.value = Number(item.ajustado).toFixed(3);
+        }
+      }
+    }
+    showWarnings(warnings);
+    return data;
+  } catch (error) {
+    if (apply) setStatus("Error", String(error.message || error));
+    return null;
+  }
+}
+
+function updateSmoothHelp() {
+  const q = Number(smooth.value);
+  const d = Number(sample.value) || 75;
+  const spec = SG_TABLE[q] || SG_TABLE[4];
+  smoothValue.textContent = `${q}/10`;
+  smoothHelp.textContent = q === 0
+    ? "Sin suavizado."
+    : `Suavizado de elevaciones. Ventana: ${spec.window} pts (${Math.round(spec.window * d)} m), polinomio ${spec.polyorder}.`;
+}
+
+function updateSlopeSmoothHelp() {
+  if (!slopeSmooth || !slopeSmoothValue || !slopeSmoothHelp) return;
+  const q = Number(slopeSmooth.value);
+  const d = Number(sample.value) || 75;
+  const spec = SG_TABLE[q] || SG_TABLE[4];
+  slopeSmoothValue.textContent = `${q}/10`;
+  slopeSmoothHelp.textContent = q === 0
+    ? "Sin suavizado de pendientes."
+    : `Suavizado de pendientes. Ventana: ${spec.window} pts (${Math.round(spec.window * d)} m), polinomio ${spec.polyorder}.`;
+}
+
+function updateSampleHelp() {
+  const value = Number(sample.value);
+  sampleValue.textContent = `${value} m`;
+  const selected = resolutionMdt.value;
+  if (selected === "5") {
+    sampleHelp.textContent = value < 20
+      ? "Advertencia: inferior al mínimo recomendado para MDT 5 m."
+      : "Mínimo 4x tamaño del píxel del MDT.";
+  } else if (selected === "25") {
+    if (value < 25) {
+      sampleHelp.textContent = "Advertencia fuerte: intervalo inferior al pixel MDT de 25 m.";
+    } else if (value < 100) {
+      sampleHelp.textContent = "Advertencia: recomendado al menos 100 m para MDT 25 m.";
+    } else {
+      sampleHelp.textContent = "Mínimo 4x tamaño del píxel del MDT.";
+    }
+  } else {
+    sampleHelp.textContent = "Mínimo 4x tamaño del píxel del MDT.";
+  }
+  updateAdvancedSgHelp();
+  updateAdvancedSlopeSgHelp();
+}
+
+function updateAnomalyHelp() {
+  const value = Number(anomaly.value || 20);
+  const label = value.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  anomalyValue.textContent = `${label} %`;
+  anomalyHelp.textContent = `Pendientes con valor superior a ${label} % son omitidas.`;
+}
+
+function updateAlphaLabels() {
+  if (alphaLocalizacion && alphaLocalizacionValue) {
+    alphaLocalizacionValue.textContent = `${Math.round(Number(alphaLocalizacion.value || 0) * 100)} %`;
+  }
+  if (alphaPendientes && alphaPendientesValue) {
+    alphaPendientesValue.textContent = `${Math.round(Number(alphaPendientes.value || 0) * 100)} %`;
+  }
+}
+
+function setCartoControlVisibility(element, visible) {
+  if (!element) return;
+  element.hidden = !visible;
+  element.style.display = visible ? "" : "none";
+}
+
+function setCartoStoredMask() {
+  if (!cartoApiKey || !cartoStoredKeyAvailable || cartoApiKey.value || cartoApiKey.dataset.editing === "true") return;
+  cartoApiKey.value = CARTO_API_KEY_MASK;
+  cartoApiKey.dataset.storedMask = "true";
+}
+
+function clearCartoStoredMask() {
+  if (!cartoApiKey || cartoApiKey.dataset.storedMask !== "true") return;
+  cartoApiKey.value = "";
+  delete cartoApiKey.dataset.storedMask;
+}
+
+function hideCartoApiKey() {
+  cartoShowPressed = false;
+  if (!cartoApiKey) return;
+  cartoApiKey.type = "password";
+  if (cartoApiKey.dataset.revealedStored === "true") {
+    cartoApiKey.value = "";
+    delete cartoApiKey.dataset.revealedStored;
+    setCartoStoredMask();
+  }
+}
+
+async function refreshCartoApiKeyStatus() {
+  if (mapaBase?.value !== "carto_positron") return;
+  try {
+    const response = await fetch("/api/carto-api-key");
+    if (!response.ok) throw new Error("No se pudo consultar el estado de la API key de CARTO.");
+    const data = await response.json();
+    if (mapaBase?.value === "carto_positron") {
+      const stored = data.stored === true;
+      cartoStoredKeyAvailable = stored;
+      setCartoControlVisibility(cartoApiKeyStatus, stored);
+      setCartoControlVisibility(olvidarCartoApiKey, stored);
+      if (stored) {
+        setCartoStoredMask();
+      } else if (cartoApiKey?.dataset.storedMask === "true") {
+        clearCartoStoredMask();
+      }
+    }
+  } catch (_) {
+    cartoStoredKeyAvailable = false;
+    setCartoControlVisibility(cartoApiKeyStatus, false);
+    setCartoControlVisibility(olvidarCartoApiKey, false);
+  }
+}
+
+function updateMapBaseControls() {
+  const isCarto = mapaBase?.value === "carto_positron";
+  setCartoControlVisibility(cartoApiKeyField, isCarto);
+  setCartoControlVisibility(recordarCartoApiKeyField, isCarto);
+  if (cartoApiKey) {
+    cartoApiKey.required = isCarto;
+    if (!isCarto) {
+      hideCartoApiKey();
+      cartoApiKey.value = "";
+      delete cartoApiKey.dataset.storedMask;
+    }
+  }
+  if (!isCarto) {
+    cartoStoredKeyAvailable = false;
+    setCartoControlVisibility(cartoApiKeyStatus, false);
+    setCartoControlVisibility(mostrarCartoApiKey, false);
+    setCartoControlVisibility(olvidarCartoApiKey, false);
+  } else {
+    setCartoControlVisibility(mostrarCartoApiKey, true);
+    refreshCartoApiKeyStatus();
+  }
+}
+
+async function showCartoApiKey() {
+  if (!cartoApiKey || mapaBase?.value !== "carto_positron") return;
+  cartoShowPressed = true;
+  const revealStored = cartoStoredKeyAvailable && (!cartoApiKey.value || cartoApiKey.dataset.storedMask === "true");
+  if (!revealStored) {
+    cartoApiKey.type = "text";
+    return;
+  }
+  try {
+    const response = await fetch("/api/carto-api-key/reveal", { method: "POST", cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!cartoShowPressed || mapaBase?.value !== "carto_positron" || typeof data.api_key !== "string") return;
+    cartoApiKey.value = data.api_key;
+    delete cartoApiKey.dataset.storedMask;
+    cartoApiKey.dataset.revealedStored = "true";
+    cartoApiKey.type = "text";
+  } finally {
+    // La respuesta solo se conserva en el campo mientras el botón permanece pulsado.
+  }
+}
+
+async function forgetCartoApiKey() {
+  if (!cartoStoredKeyAvailable || !window.confirm("¿Olvidar la API key guardada en este equipo?")) return;
+  hideCartoApiKey();
+  try {
+    const response = await fetch("/api/carto-api-key", { method: "DELETE", cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok || data.stored !== false) return;
+    cartoStoredKeyAvailable = false;
+    if (cartoApiKey) {
+      cartoApiKey.value = "";
+      cartoApiKey.type = "password";
+      delete cartoApiKey.dataset.storedMask;
+    }
+    setCartoControlVisibility(cartoApiKeyStatus, false);
+    setCartoControlVisibility(olvidarCartoApiKey, false);
+  } catch (_) {
+    // Si no se puede borrar, se conserva el estado actual de la interfaz.
+  }
+}
+
+function pkSliderValue(input) {
+  if (!input) return null;
+  const index = Math.max(0, Math.min(PK_INTERVALS.length - 1, Number(input.value || 0)));
+  return PK_INTERVALS[index] || PK_INTERVALS[0];
+}
+
+function setPkSliderToValue(input, value) {
+  if (!input) return;
+  const index = PK_INTERVALS.indexOf(Number(value));
+  input.value = String(index >= 0 ? index : 0);
+}
+
+function updatePkSliderLabels() {
+  const symbol = pkSliderValue(pkSimboloCada);
+  let label = pkSliderValue(pkEtiquetaCada);
+  if (label < symbol) {
+    setPkSliderToValue(pkEtiquetaCada, symbol);
+    label = symbol;
+  }
+  if (pkSimboloCadaValue) pkSimboloCadaValue.textContent = `${symbol} km`;
+  if (pkEtiquetaCadaValue) pkEtiquetaCadaValue.textContent = `${label} km`;
+}
+
+function updatePkControls() {
+  if (!pkModo || !pkManualControls) return;
+  const manual = pkModo.value === "manual";
+  if (pkSimboloCada) pkSimboloCada.disabled = !manual;
+  if (pkEtiquetaCada) pkEtiquetaCada.disabled = !manual;
+  pkManualControls.classList.toggle("is-disabled", !manual);
+  updatePkSliderLabels();
+  if (pkAutoHelp) {
+    pkAutoHelp.textContent = pkModo.value === "automatico"
+      ? `Automático: ${automaticPkText()}`
+      : pkModo.value === "no_mostrar"
+        ? "No se pintarán símbolos ni etiquetas de PK."
+        : "Manual: símbolo y etiqueta se configuran por separado.";
+  }
+}
+
+function automaticPkText() {
+  const start = numberOrNull(document.querySelector("#pkInicio").value);
+  const end = numberOrNull(document.querySelector("#pkFin").value);
+  if (start === null || end === null) return "símbolo y etiqueta según longitud del tramo.";
+  const length = Math.abs(end - start);
+  let symbol = 50;
+  let label = 100;
+  if (length <= 10) [symbol, label] = [1, 1];
+  else if (length <= 30) [symbol, label] = [1, 5];
+  else if (length <= 80) [symbol, label] = [5, 10];
+  else if (length <= 150) [symbol, label] = [10, 25];
+  else if (length <= 300) [symbol, label] = [25, 50];
+  return `símbolo cada ${symbol} km · etiqueta cada ${label} km.`;
+}
+
+function updateAdvancedSgHelp() {
+  if (!sgWindow || !sgWindowValue || !sgPolyorder || !sgPolyorderValue) return;
+  const windowPoints = Number(sgWindow.value || 9);
+  const d = Number(sample.value) || 75;
+  const maxPoly = Math.max(1, Math.min(4, windowPoints - 1));
+  let visual = Number(sgPolyorder.value || 3);
+  let poly = 5 - visual;
+  if (poly > maxPoly) {
+    poly = maxPoly;
+    sgPolyorder.value = String(5 - poly);
+  }
+  if (poly >= windowPoints) {
+    poly = Math.max(1, windowPoints - 1);
+    visual = 5 - poly;
+    sgPolyorder.value = String(visual);
+  }
+  sgWindowValue.textContent = `${windowPoints} puntos · ${Math.round(windowPoints * d)} m`;
+  sgPolyorderValue.textContent = `Polinomio ${poly}`;
+}
+
+function sgPolyorderReal() {
+  if (!sgPolyorder) return null;
+  return 5 - Number(sgPolyorder.value || 3);
+}
+
+function sgSlopePolyorderReal() {
+  if (!sgSlopePolyorder) return null;
+  return 5 - Number(sgSlopePolyorder.value || 3);
+}
+
+function updateAdvancedSgState() {
+  if (!sgAdvanced || !sgAdvancedControls || !smooth) return;
+  const enabled = sgAdvanced.checked;
+  smooth.disabled = enabled;
+  sgAdvancedControls.classList.toggle("is-disabled", !enabled);
+  if (sgWindow) sgWindow.disabled = !enabled;
+  if (sgPolyorder) sgPolyorder.disabled = !enabled;
+  updateAdvancedSgHelp();
+}
+
+function updateAdvancedSlopeSgHelp() {
+  if (!sgSlopeWindow || !sgSlopeWindowValue || !sgSlopePolyorder || !sgSlopePolyorderValue) return;
+  const windowPoints = Number(sgSlopeWindow.value || 13);
+  const d = Number(sample.value) || 75;
+  const maxPoly = Math.max(1, Math.min(4, windowPoints - 1));
+  let visual = Number(sgSlopePolyorder.value || 3);
+  let poly = 5 - visual;
+  if (poly > maxPoly) {
+    poly = maxPoly;
+    sgSlopePolyorder.value = String(5 - poly);
+  }
+  if (poly >= windowPoints) {
+    poly = Math.max(1, windowPoints - 1);
+    visual = 5 - poly;
+    sgSlopePolyorder.value = String(visual);
+  }
+  sgSlopeWindowValue.textContent = `${windowPoints} puntos · ${Math.round(windowPoints * d)} m`;
+  sgSlopePolyorderValue.textContent = `Polinomio ${poly}`;
+}
+
+function updateAdvancedSlopeSgState() {
+  if (!sgSlopeAdvanced || !sgSlopeAdvancedControls || !slopeSmooth) return;
+  const enabled = sgSlopeAdvanced.checked;
+  slopeSmooth.disabled = enabled;
+  sgSlopeAdvancedControls.classList.toggle("is-disabled", !enabled);
+  if (sgSlopeWindow) sgSlopeWindow.disabled = !enabled;
+  if (sgSlopePolyorder) sgSlopePolyorder.disabled = !enabled;
+  updateAdvancedSlopeSgHelp();
+}
+
+function payloadFromForm() {
+  const data = new FormData(form);
+  const elevAdvanced = data.get("suavizado_elevaciones_avanzado") === "on";
+  const slopeAdvanced = data.get("suavizado_pendientes_avanzado") === "on";
+  const elevSmooth = Number(data.get("suavizado_elevaciones") || 4);
+  const slopeSmoothValueForm = Number(data.get("suavizado_pendientes") || 4);
+  const cartoApiKeyValue = cartoApiKey?.dataset.storedMask === "true" ? "" : String(data.get("carto_api_key") || "");
+  return {
+    carretera: selectedRoad.carretera,
+    pk_inicio: Number(data.get("pk_inicio")),
+    pk_fin: Number(data.get("pk_fin")),
+    sentido: String(data.get("sentido") || "creciente"),
+    generar_mapa_localizacion: boolField(data, "generar_mapa_localizacion"),
+    generar_mapa_pendientes: boolField(data, "generar_mapa_pendientes"),
+    generar_perfil: boolField(data, "generar_perfil"),
+    generar_datos_auxiliares: boolField(data, "generar_datos_auxiliares"),
+    generar_todo: false,
+    resolucion_mdt: String(data.get("resolucion_mdt") || "5"),
+    intervalo_muestreo_m: numberOrNull(data.get("intervalo_muestreo_m")) || 75,
+    longitud_intervalo_pendiente_m: numberOrNull(data.get("longitud_intervalo_pendiente_m")),
+    suavizado: elevSmooth,
+    suavizado_modo: elevAdvanced ? "avanzado" : "simple",
+    sg_window_puntos: elevAdvanced ? numberOrNull(data.get("sg_elevaciones_window_puntos")) : null,
+    sg_polyorder: elevAdvanced ? sgPolyorderReal() : null,
+    sg_polyorder_slider_visual: elevAdvanced ? numberOrNull(data.get("sg_elevaciones_polyorder_visual")) : null,
+    suavizado_elevaciones: elevSmooth,
+    suavizado_elevaciones_modo: elevAdvanced ? "avanzado" : "simple",
+    sg_elevaciones_window_puntos: elevAdvanced ? numberOrNull(data.get("sg_elevaciones_window_puntos")) : null,
+    sg_elevaciones_polyorder: elevAdvanced ? sgPolyorderReal() : null,
+    sg_elevaciones_polyorder_slider_visual: elevAdvanced ? numberOrNull(data.get("sg_elevaciones_polyorder_visual")) : null,
+    suavizado_pendientes: slopeSmoothValueForm,
+    suavizado_pendientes_modo: slopeAdvanced ? "avanzado" : "simple",
+    sg_pendientes_window_puntos: slopeAdvanced ? numberOrNull(data.get("sg_pendientes_window_puntos")) : null,
+    sg_pendientes_polyorder: slopeAdvanced ? sgSlopePolyorderReal() : null,
+    sg_pendientes_polyorder_slider_visual: slopeAdvanced ? numberOrNull(data.get("sg_pendientes_polyorder_visual")) : null,
+    umbral_pendiente_anomala_pct: Number(data.get("umbral_pendiente_anomala_pct") || 20),
+    modo_eje_y: String(data.get("modo_eje_y") || "cero"),
+    mostrar_linea_muestreada_elevaciones: boolField(data, "mostrar_linea_muestreada_elevaciones"),
+    mostrar_anotaciones_curvas_nivel: boolField(data, "mostrar_anotaciones_curvas_nivel"),
+    vias_fondo_modo: String(data.get("vias_fondo_modo") || "todas"),
+    mapa_base: String(data.get("mapa_base") || "ign_gris"),
+    carto_api_key: cartoApiKeyValue,
+    recordar_carto_api_key: boolField(data, "recordar_carto_api_key"),
+    pk_modo: String(data.get("pk_modo") || "automatico"),
+    pk_simbolo_cada: pkSliderValue(pkSimboloCada),
+    pk_etiqueta_cada: pkSliderValue(pkEtiquetaCada),
+    pintar_pks: String(data.get("pk_modo") || "automatico") !== "no_mostrar",
+    alpha_elev_localizacion: Number(data.get("alpha_elev_localizacion") || 0.34),
+    alpha_elev_pendientes: Number(data.get("alpha_elev_pendientes") || 0.46),
+  };
+}
+
+function fileKind(item) {
+  const name = item.name.toLowerCase();
+  if (name.endsWith(".zip")) return "zip";
+  if (name.startsWith("mapa_") && name.endsWith(".png")) return "mapas";
+  if (name.startsWith("perfil_longitudinal") && name.endsWith(".png")) return "perfiles";
+  return "datos";
+}
+
+function accordion(title, html, open = false) {
+  return `<details ${open ? "open" : ""}><summary>${title}</summary><div class="accordion-body">${html}</div></details>`;
+}
+
+function previewImages(items) {
+  if (!items.length) return "<p class='empty'>Sin previsualizaciones PNG.</p>";
+  return items.map((item) => `
+    <figure class="preview">
+      <img src="${item.url}" loading="lazy" alt="${item.name}">
+      <figcaption><a href="${item.url}" target="_blank">${item.name}</a></figcaption>
+    </figure>
+  `).join("");
+}
+
+function dataLinks(items) {
+  if (!items.length) return "<p class='empty'>Sin datos auxiliares.</p>";
+  return items.map((item) => `<a href="${item.url}" target="_blank">${item.name}</a>`).join("");
+}
+
+function numberText(value, suffix = "", digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Sin dato";
+  return `${n.toLocaleString("es-ES", { maximumFractionDigits: digits, minimumFractionDigits: digits })}${suffix}`;
+}
+
+function pkText(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? formatPk(n) : "Sin dato";
+}
+
+function metric(label, value) {
+  return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function renderSummaryCard(data) {
+  const meta = data.metadata || {};
+  const scope = meta.scopes?.[0] || {};
+  const tramo = scope.tramo || {};
+  const perfil = scope.perfil || {};
+  const anomalias = scope.anomalias || perfil.anomalias || {};
+  const nLecturas = Number(anomalias.n_lecturas_anomalas || 0);
+  const nSegmentos = Number(scope.pendientes?.n_segmentos_anomalos || 0);
+  const anomalyText = nLecturas || nSegmentos
+    ? `${nLecturas} lecturas / ${nSegmentos} segmentos aplanados`
+    : "Sin lecturas aplanadas";
+  return `
+    <section class="summary-card">
+      <div>
+        <h3>Resumen del tramo</h3>
+        <p>${tramo.carretera || meta.parametros?.carretera || ""} · ${tramo.sentido || meta.parametros?.sentido || ""}</p>
+      </div>
+      <div class="metrics-grid">
+        ${metric("Vía", tramo.carretera || meta.parametros?.carretera || "Sin dato")}
+        ${metric("Sentido", tramo.sentido || meta.parametros?.sentido || "Sin dato")}
+        ${metric("PK inicio", pkText(tramo.pk_inicio))}
+        ${metric("PK fin", pkText(tramo.pk_fin))}
+        ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
+        ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
+        ${metric("Altitud mínima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
+        ${metric("Altitud máxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
+        ${metric("Pendiente máxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
+        ${metric("Pendiente mínima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
+        ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
+        ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
+        ${metric("Umbral anomalías", numberText(anomalias.umbral_pendiente_anomala_pct, " %", 0))}
+        ${metric("Anomalias", anomalyText)}
+      </div>
+      ${nLecturas || nSegmentos ? "<p class='summary-warning'>Hay lecturas aplanadas por superar el umbral de pendiente anómala.</p>" : ""}
+    </section>
+  `;
+}
+
+function renderSummaryCardV2(data) {
+  const meta = data.metadata || {};
+  const scopes = meta.scopes?.length ? meta.scopes : [{}];
+  const params = meta.parametros || {};
+  const alt = meta.altimetria || scopes[0]?.altimetria || {};
+  const mdt = meta.mdt || {};
+  const usedResolution = alt.resolucion_mdt_usada ?? mdt.resolucion_m ?? mdt.resolucion_usada;
+  const paramsHtml = `
+    <section class="summary-card compact">
+      <div>
+        <h3>Parámetros empleados</h3>
+        <p>Configuración usada en esta generación.</p>
+      </div>
+      <div class="metrics-grid">
+        ${metric("Suavizado", params.suavizado_modo === "avanzado" ? `Avanzado · ${params.sg_window_puntos || "?"} puntos · polinomio ${params.sg_polyorder || "?"}` : `${params.suavizado ?? 4}/10`)}
+        ${metric("Muestreo altimétrico", numberText(params.intervalo_muestreo_m ?? 75, " m", 0))}
+        ${metric("Segmento pendiente", params.longitud_intervalo_pendiente_m ? numberText(params.longitud_intervalo_pendiente_m, " m", 0) : "Auto")}
+        ${metric("Umbral de anomalía", numberText(params.umbral_pendiente_anomala_pct ?? 20, " %", 1))}
+        ${metric("Fuente altimétrica usada", alt.fuente_altimetrica_usada_label || "Sin dato")}
+        ${metric("Resolución MDT solicitada", `${alt.resolucion_mdt_solicitada ?? params.resolucion_mdt ?? "5"} m`)}
+        ${metric("Resolución MDT usada", usedResolution ? `${usedResolution} m` : "No disponible")}
+        ${metric("Estado MDT", alt.estado_mdt || (mdt.path ? "Disponible" : "No disponible"))}
+        ${metric("Fallback aplicado", alt.fallback_altimetrico || "Sin dato")}
+      </div>
+    </section>
+  `;
+  const scopesHtml = scopes.map((scope) => {
+    const tramo = scope.tramo || {};
+    const perfil = scope.perfil || {};
+    const anomalias = scope.anomalias || perfil.anomalias || {};
+    const anomalyNote = renderAnomalyRanges(anomalias);
+    return `
+      <section class="summary-card">
+        <div>
+          <h3>Resumen del tramo</h3>
+          <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
+        </div>
+        <div class="metrics-grid">
+          ${metric("Via", tramo.carretera || params.carretera || "Sin dato")}
+          ${metric("Sentido", tramo.sentido || params.sentido || "Sin dato")}
+          ${metric("PK inicio", pkText(tramo.pk_inicio))}
+          ${metric("PK fin", pkText(tramo.pk_fin))}
+          ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
+          ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
+          ${metric("Altitud minima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
+          ${metric("Altitud maxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
+          ${metric("Pendiente maxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
+          ${metric("Pendiente minima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
+          ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
+          ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
+        </div>
+        ${anomalyNote}
+      </section>
+    `;
+  }).join("");
+  return scopesHtml + paramsHtml;
+}
+
+function renderAnomalyRanges(anomalias) {
+  const ranges = anomalias.detalle_rangos_anomalos || [];
+  if (!ranges.length) return "<p class='summary-muted'>Sin pendientes aplanadas.</p>";
+  const rows = ranges.map((item) => `
+    <li>
+      <span>PK ${pkText(item.pk_inicio)} a PK ${pkText(item.pk_fin)} · ${Number(item.n_puntos_muestreo || 0)} puntos · ${Number(item.n_segmentos_mapa || 0)} segmentos · máx. suavizada ${numberText(item.pendiente_suavizada_max_pct ?? item.pendiente_bruta_max_pct, " %", 1)} en PK ${pkText(item.pk_pendiente_suavizada_max ?? item.pk_pendiente_bruta_max)}</span>
+    </li>
+  `).join("");
+  return `
+    <div class="anomaly-ranges">
+      <h4>Pendientes aplanadas</h4>
+      <ul>${rows}</ul>
+    </div>
+  `;
+}
+
+function smoothParamText(params, prefix, legacy = false) {
+  const mode = params[`${prefix}_modo`] || (legacy ? params.suavizado_modo : "simple");
+  if (mode === "avanzado") {
+    const windowPoints = params[`sg_${prefix.replace("suavizado_", "")}_window_puntos`] || (legacy ? params.sg_window_puntos : "?");
+    const polyorder = params[`sg_${prefix.replace("suavizado_", "")}_polyorder`] || (legacy ? params.sg_polyorder : "?");
+    return `Avanzado · ${windowPoints} puntos · polinomio ${polyorder}`;
+  }
+  return `${params[prefix] ?? (legacy ? params.suavizado : 4) ?? 4}/10`;
+}
+
+function renderSummaryCardV3(data) {
+  const meta = data.metadata || {};
+  const scopes = meta.scopes?.length ? meta.scopes : [{}];
+  const params = meta.parametros || {};
+  const alt = meta.altimetria || scopes[0]?.altimetria || {};
+  const mdt = meta.mdt || {};
+  const usedResolution = alt.resolucion_mdt_usada ?? mdt.resolucion_m ?? mdt.resolucion_usada;
+  const paramsHtml = `
+    <section class="summary-card compact">
+      <div>
+        <h3>Parámetros empleados</h3>
+        <p>Configuración usada en esta generación.</p>
+      </div>
+      <div class="metrics-grid">
+        ${metric("Suavizado de elevaciones", smoothParamText(params, "suavizado_elevaciones", true))}
+        ${metric("Suavizado de pendientes", smoothParamText(params, "suavizado_pendientes"))}
+        ${metric("Muestreo altimétrico", numberText(params.intervalo_muestreo_m ?? 75, " m", 0))}
+        ${metric("Segmento pendiente", params.longitud_intervalo_pendiente_m ? numberText(params.longitud_intervalo_pendiente_m, " m", 0) : "Auto")}
+        ${metric("Umbral de anomalía", numberText(params.umbral_pendiente_anomala_pct ?? 20, " %", 1))}
+        ${metric("Fuente altimétrica usada", alt.fuente_altimetrica_usada_label || "Sin dato")}
+        ${metric("Resolución MDT solicitada", `${alt.resolucion_mdt_solicitada ?? params.resolucion_mdt ?? "5"} m`)}
+        ${metric("Resolución MDT usada", usedResolution ? `${usedResolution} m` : "No disponible")}
+        ${metric("Estado MDT", alt.estado_mdt || (mdt.path ? "Disponible" : "No disponible"))}
+      </div>
+    </section>
+  `;
+  const scopesHtml = scopes.map((scope) => {
+    const tramo = scope.tramo || {};
+    const perfil = scope.perfil || {};
+    const anomalias = scope.anomalias || perfil.anomalias || {};
+    return `
+      <section class="summary-card">
+        <div>
+          <h3>Resumen del tramo</h3>
+          <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
+        </div>
+        <div class="metrics-grid">
+          ${metric("Vía", tramo.carretera || params.carretera || "Sin dato")}
+          ${metric("Sentido", tramo.sentido || params.sentido || "Sin dato")}
+          ${metric("PK inicio", pkText(tramo.pk_inicio))}
+          ${metric("PK fin", pkText(tramo.pk_fin))}
+          ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
+          ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
+          ${metric("Altitud mínima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
+          ${metric("Altitud máxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
+          ${metric("Pendiente máxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
+          ${metric("Pendiente mínima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
+          ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
+          ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
+        </div>
+        ${renderAnomalyRanges(anomalias)}
+      </section>
+    `;
+  }).join("");
+  return scopesHtml + paramsHtml;
+}
+
+renderSummaryCard = renderSummaryCardV3;
+
+function renderZipButtons(zipDownloadsData) {
+  zipDownloads.innerHTML = "";
+  const entries = [
+    ["mapas", "Descargar mapas"],
+    ["perfiles", "Descargar perfiles"],
+    ["datos", "Descargar datos auxiliares"],
+  ];
+  for (const [key, label] of entries) {
+    const item = zipDownloadsData?.[key];
+    if (!item) continue;
+    const link = document.createElement("a");
+    link.href = item.url;
+    link.textContent = label;
+    link.className = "zip-button";
+    zipDownloads.appendChild(link);
+  }
+}
+
+function renderResults(data) {
+  const downloads = data.downloads || [];
+  const mapImages = downloads.filter((item) => fileKind(item) === "mapas");
+  const profileImages = downloads.filter((item) => fileKind(item) === "perfiles");
+  const profilesWithSlope = profileImages.filter((item) => item.name.toLowerCase().includes("_con_pendiente"));
+  const profilesWithoutSlope = profileImages.filter((item) => item.name.toLowerCase().includes("_sin_pendiente"));
+  const otherProfiles = profileImages.filter((item) => !profilesWithSlope.includes(item) && !profilesWithoutSlope.includes(item));
+  const dataItems = downloads.filter((item) => fileKind(item) === "datos");
+  const meta = data.metadata || {};
+  const scope = meta.scopes?.[0]?.tramo || {};
+  const info = `
+    <div class="run-info">
+      <strong>Proceso completado</strong>
+      <span>Salida: ${data.job_id}</span>
+    </div>
+  `;
+  resultsBox.innerHTML = info
+    + renderSummaryCard(data)
+    + accordion("Mapas generados", previewImages(mapImages), true)
+    + accordion("Perfil longitudinal con pendiente", previewImages(profilesWithSlope.length ? profilesWithSlope : otherProfiles), true)
+    + accordion("Perfil longitudinal sin pendiente", previewImages(profilesWithoutSlope), false)
+    + accordion("Datos auxiliares y metadatos", dataLinks(dataItems), false);
+  renderZipButtons(data.zip_downloads);
+}
+
+roadInput.addEventListener("input", refreshRoadSuggestions);
+roadInput.addEventListener("blur", () => setTimeout(() => { suggestionsBox.hidden = true; }, 180));
+roadInput.addEventListener("focus", refreshRoadSuggestions);
+clearRoad.addEventListener("click", clearRoadField);
+document.querySelector("#pkInicio").addEventListener("blur", () => validateMainPk(false));
+document.querySelector("#pkFin").addEventListener("blur", () => validateMainPk(false));
+document.querySelector("#sentido").addEventListener("change", () => validateMainPk(false));
+smooth.addEventListener("input", updateSmoothHelp);
+if (slopeSmooth) slopeSmooth.addEventListener("input", updateSlopeSmoothHelp);
+sample.addEventListener("input", () => {
+  updateSampleHelp();
+  updateSmoothHelp();
+  updateSlopeSmoothHelp();
+});
+resolutionMdt.addEventListener("change", updateSampleHelp);
+anomaly.addEventListener("input", updateAnomalyHelp);
+if (pkModo) pkModo.addEventListener("change", updatePkControls);
+if (sgAdvanced) sgAdvanced.addEventListener("change", updateAdvancedSgState);
+if (sgWindow) sgWindow.addEventListener("input", updateAdvancedSgHelp);
+if (sgPolyorder) sgPolyorder.addEventListener("input", updateAdvancedSgHelp);
+if (sgSlopeAdvanced) sgSlopeAdvanced.addEventListener("change", updateAdvancedSlopeSgState);
+if (sgSlopeWindow) sgSlopeWindow.addEventListener("input", updateAdvancedSlopeSgHelp);
+if (sgSlopePolyorder) sgSlopePolyorder.addEventListener("input", updateAdvancedSlopeSgHelp);
+if (alphaLocalizacion) alphaLocalizacion.addEventListener("input", updateAlphaLabels);
+if (alphaPendientes) alphaPendientes.addEventListener("input", updateAlphaLabels);
+if (mapaBase) mapaBase.addEventListener("change", updateMapBaseControls);
+if (cartoApiKey) {
+  cartoApiKey.addEventListener("focus", () => {
+    cartoApiKey.dataset.editing = "true";
+    clearCartoStoredMask();
+  });
+  cartoApiKey.addEventListener("blur", () => {
+    delete cartoApiKey.dataset.editing;
+    if (!cartoShowPressed) setCartoStoredMask();
+  });
+}
+if (mostrarCartoApiKey) {
+  mostrarCartoApiKey.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    showCartoApiKey();
+  });
+  for (const eventName of ["pointerup", "pointercancel", "pointerleave", "lostpointercapture", "blur"]) {
+    mostrarCartoApiKey.addEventListener(eventName, hideCartoApiKey);
+  }
+}
+window.addEventListener("pointerup", hideCartoApiKey);
+window.addEventListener("blur", hideCartoApiKey);
+if (olvidarCartoApiKey) olvidarCartoApiKey.addEventListener("click", forgetCartoApiKey);
+if (pkSimboloCada && pkEtiquetaCada) {
+  pkSimboloCada.addEventListener("input", updatePkControls);
+  pkEtiquetaCada.addEventListener("input", updatePkControls);
+}
+document.querySelector("#pkInicio").addEventListener("input", updateSmoothHelp);
+document.querySelector("#pkFin").addEventListener("input", updateSmoothHelp);
+document.querySelector("#pkInicio").addEventListener("input", updatePkControls);
+document.querySelector("#pkFin").addEventListener("input", updatePkControls);
+
+form.addEventListener("submit-disabled", async (event) => {
+  event.preventDefault();
+  resultsBox.innerHTML = "";
+  zipDownloads.innerHTML = "";
+  setStatus("Generando", "El backend está creando mapas, perfil y exports.");
+  const button = form.querySelector(".primary");
+  button.disabled = true;
+  try {
+    await ensureSelectedRoad();
+    await validateMainPk(true);
+    const response = await fetch("/generar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadFromForm()),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Error de generación");
+    setStatus("Generación completada", `Salida: ${data.job_id}`);
+    renderResults(data);
+  } catch (error) {
+    setStatus("Error", String(error.message || error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  resultsBox.innerHTML = "";
+  zipDownloads.innerHTML = "";
+  loadingStartedAt = performance.now();
+  lastProgress = { fase_indice: 1, fases_total: PROGRESS_PHASES.length };
+  renderLoading(lastProgress);
+  stopLoadingClock();
+  loadingTimer = setInterval(() => renderLoading(lastProgress || { fase_indice: 1, fases_total: PROGRESS_PHASES.length }), 1000);
+  const button = form.querySelector(".primary");
+  button.disabled = true;
+  try {
+    await ensureSelectedRoad();
+    await validateMainPk(true);
+    const response = await fetch("/generar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadFromForm()),
+    });
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.detail || "Error de generacion");
+    let finalResult = null;
+    while (!finalResult) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const progressResponse = await fetch(`/api/progreso/${job.job_id}`);
+      const progress = await progressResponse.json();
+      if (!progressResponse.ok) throw new Error(progress.detail || "No se pudo consultar el progreso");
+      lastProgress = progress;
+      renderLoading(progress);
+      if (progress.estado === "completado") {
+        finalResult = progress.resultado;
+      } else if (progress.estado === "error") {
+        throw new Error(progress.error || progress.detalle || "Error de generacion");
+      }
+    }
+    stopLoadingClock();
+    lastProgress = null;
+    setStatus("Proceso completado", `Salida: ${finalResult.job_id}`);
+    renderResults(finalResult);
+  } catch (error) {
+    stopLoadingClock();
+    lastProgress = null;
+    setStatus("Error", String(error.message || error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+loadRoads().catch(() => {});
+updateSampleHelp();
+updateSmoothHelp();
+updateSlopeSmoothHelp();
+updateAnomalyHelp();
+updatePkControls();
+updateAdvancedSgState();
+updateAdvancedSlopeSgState();
+updateAlphaLabels();
+updateMapBaseControls();
