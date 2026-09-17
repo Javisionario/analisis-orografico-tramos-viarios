@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 import re
 import urllib.request
-from urllib.parse import quote, urlsplit, urlunsplit
+from hashlib import sha256
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from collections import Counter, OrderedDict
 from io import BytesIO
 from pathlib import Path
@@ -42,6 +43,10 @@ LOCATION_TILE_ZOOM_OFFSET = -1
 TILE_MAX_PER_MAP = 80
 TILE_FAILURE_LIMIT = 8
 TILE_RETINA_FALLBACK = False
+IGN_WMS_URL = "https://www.ign.es/wms-inspire/ign-base"
+IGN_WMS_LAYER = "IGNBaseTodo-gris"
+IGN_WMS_CRS = "EPSG:3857"
+IGN_WMS_DPI = 330
 
 MAP_DPI = 600
 WORLD_MERCATOR_METRES = 40075016.68557849
@@ -266,6 +271,97 @@ def valid_tile_bytes(data: bytes) -> bool:
     return data.startswith(b"\x89PNG") or data.startswith(b"\xff\xd8\xff")
 
 
+def mercator_metres(lon: float, lat: float) -> tuple[float, float]:
+    """Convierte longitud/latitud a EPSG:3857 sin alterar la BBOX del mapa."""
+    x, y_from_top = mercator(lon, lat)
+    half_world = WORLD_MERCATOR_METRES / 2.0
+    return x * WORLD_MERCATOR_METRES - half_world, half_world - y_from_top * WORLD_MERCATOR_METRES
+
+
+def ign_wms_bbox(bounds: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    lon_min, lat_min, lon_max, lat_max = bounds
+    min_x, min_y = mercator_metres(lon_min, lat_min)
+    max_x, max_y = mercator_metres(lon_max, lat_max)
+    return min_x, min_y, max_x, max_y
+
+
+def ign_wms_request_url(bounds: tuple[float, float, float, float], width: int, height: int) -> str:
+    bbox = ign_wms_bbox(bounds)
+    params = {
+        "SERVICE": "WMS",
+        "VERSION": "1.3.0",
+        "REQUEST": "GetMap",
+        "LAYERS": IGN_WMS_LAYER,
+        "STYLES": "",
+        "CRS": IGN_WMS_CRS,
+        "BBOX": ",".join(f"{value:.12f}" for value in bbox),
+        "WIDTH": str(int(width)),
+        "HEIGHT": str(int(height)),
+        "FORMAT": "image/png",
+        "TRANSPARENT": "false",
+        "FORMAT_OPTIONS": f"dpi:{IGN_WMS_DPI}",
+    }
+    return f"{IGN_WMS_URL}?{urlencode(params)}"
+
+
+def ign_wms_cache_path(bounds: tuple[float, float, float, float], width: int, height: int) -> Path:
+    """Caché WMS separada de TMS; la huella incluye BBOX, tamaño, capa y DPI."""
+    payload = "|".join(
+        [
+            "ign_wms",
+            IGN_WMS_URL,
+            IGN_WMS_LAYER,
+            IGN_WMS_CRS,
+            *(f"{value:.12f}" for value in ign_wms_bbox(bounds)),
+            str(int(width)),
+            str(int(height)),
+            str(IGN_WMS_DPI),
+        ]
+    )
+    digest = sha256(payload.encode("utf-8")).hexdigest()[:20]
+    return TILE_CACHE / f"ign_wms_{IGN_WMS_LAYER}_{IGN_WMS_DPI}_{digest}.png"
+
+
+def valid_wms_image(data: bytes, width: int, height: int) -> bool:
+    if not data.startswith(b"\x89PNG"):
+        return False
+    try:
+        with Image.open(BytesIO(data)) as image:
+            image.load()
+            return image.format == "PNG" and image.size == (int(width), int(height))
+    except Exception:
+        return False
+
+
+def ign_wms_bytes(bounds: tuple[float, float, float, float], width: int, height: int) -> bytes | None:
+    """Obtiene el callejero WMS para el clip completo, con caché y validación estricta."""
+    try:
+        TILE_CACHE.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        remember_tile_error(error, str(TILE_CACHE))
+        return None
+    cache = ign_wms_cache_path(bounds, width, height)
+    try:
+        if cache.exists():
+            cached = cache.read_bytes()
+            if valid_wms_image(cached, width, height):
+                return cached
+    except Exception as error:
+        remember_tile_error(error, str(cache))
+    url = ign_wms_request_url(bounds, width, height)
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Analisis-Orografico/3.1.0"})
+        with urllib.request.urlopen(request, timeout=TILE_TIMEOUT_SECONDS) as response:
+            data = response.read()
+        if not valid_wms_image(data, width, height):
+            raise ValueError("La respuesta WMS no es un PNG valido con las dimensiones solicitadas")
+        cache.write_bytes(data)
+        return data
+    except Exception as error:
+        remember_tile_error(error, url)
+        return None
+
+
 def tile_bytes(
     tx: int,
     ty: int,
@@ -460,6 +556,52 @@ def basemap_raster(
     return ok
 
 
+def ign_wms_basemap_raster(
+    bounds: tuple[float, float, float, float],
+    canvas: Image.Image,
+    clip: tuple[int, int, int, int],
+    brightness: float,
+    saturation: float,
+    gamma: float,
+) -> bool:
+    """Compone el WMS IGN a tamaño nativo del clip, sin reescalarlo ni teselarlo."""
+    key = tuple(f"{value:.12f}" for value in ign_wms_bbox(bounds)) + (
+        clip[2],
+        clip[3],
+        int(brightness),
+        int(saturation),
+        int(gamma * 100),
+        "ign_wms",
+        IGN_WMS_LAYER,
+        IGN_WMS_CRS,
+        IGN_WMS_DPI,
+    )
+    if key in BASEMAP_RASTER_CACHE:
+        cached, ok = BASEMAP_RASTER_CACHE.pop(key)
+        BASEMAP_RASTER_CACHE[key] = (cached, ok)
+        canvas.alpha_composite(cached.copy(), (clip[0], clip[1]))
+        return ok
+    data = ign_wms_bytes(bounds, clip[2], clip[3])
+    if not data:
+        return False
+    try:
+        with Image.open(BytesIO(data)) as raw:
+            raw.load()
+            layer = adjust_tile_image(raw.convert("RGBA"), brightness, saturation, gamma)
+    except Exception as error:
+        remember_tile_error(error, "IGN WMS")
+        return False
+    if layer.size != (clip[2], clip[3]):
+        remember_tile_error(ValueError("El WMS no coincide con el clip solicitado"), "IGN WMS")
+        return False
+    BASEMAP_RASTER_CACHE[key] = (layer.copy(), True)
+    BASEMAP_RASTER_CACHE.move_to_end(key)
+    while len(BASEMAP_RASTER_CACHE) > BASEMAP_RASTER_CACHE_SIZE:
+        BASEMAP_RASTER_CACHE.popitem(last=False)
+    canvas.alpha_composite(layer, (clip[0], clip[1]))
+    return True
+
+
 def render_report_basemap(
     bounds: tuple[float, float, float, float],
     canvas: Image.Image,
@@ -475,13 +617,35 @@ def render_report_basemap(
     saturation = LOC_BASEMAP_SATURATION if location else MAIN_BASEMAP_SATURATION
     gamma = LOC_BASEMAP_GAMMA if location else MAIN_BASEMAP_GAMMA
     zoom_offset = LOCATION_TILE_ZOOM_OFFSET if location else 0
-    ok = basemap_raster(bounds, canvas, clip, brightness, saturation, gamma, provider_key, carto_api_key, MAIN_TILE_LAYER, TILE_RETINA_FALLBACK, zoom_offset)
+    method = "tms"
+    fallback_used = False
+    if provider_key == MAP_BASE_IGN_GRIS and not location:
+        method = "wms"
+        ok = ign_wms_basemap_raster(bounds, canvas, clip, brightness, saturation, gamma)
+        if not ok:
+            fallback_used = True
+            method = "tms_fallback"
+            ok = basemap_raster(bounds, canvas, clip, brightness, saturation, gamma, provider_key, carto_api_key, MAIN_TILE_LAYER, TILE_RETINA_FALLBACK, zoom_offset)
+    else:
+        ok = basemap_raster(bounds, canvas, clip, brightness, saturation, gamma, provider_key, carto_api_key, MAIN_TILE_LAYER, TILE_RETINA_FALLBACK, zoom_offset)
     if isinstance(config, dict):
         config["proveedor"] = provider["nombre"]
         config["atribucion"] = provider["atribucion"]
         config["tms"] = provider["tms"]
         config["max_native_zoom"] = provider["max_native_zoom"]
         config["zoom_offset"] = zoom_offset
+        config["metodo"] = method
+        config["fallback_tms_usado"] = fallback_used
+        if provider_key == MAP_BASE_IGN_GRIS and not location:
+            config["wms"] = {
+                "url": IGN_WMS_URL,
+                "capa": IGN_WMS_LAYER,
+                "crs": IGN_WMS_CRS,
+                "dpi": IGN_WMS_DPI,
+                "width": clip[2],
+                "height": clip[3],
+                "bbox_3857": list(ign_wms_bbox(bounds)),
+            }
         if provider_key == MAP_BASE_CARTO_POSITRON:
             config["capa"] = MAIN_TILE_LAYER
         config["ok"] = ok
