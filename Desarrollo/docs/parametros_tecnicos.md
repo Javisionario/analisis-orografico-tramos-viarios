@@ -249,7 +249,7 @@ La ayuda de interfaz muestra la ventana equivalente y el polinomio usado por la 
 Si se activa `Suavizado Savitzky-Golay avanzado`, el slider simple queda desactivado y se usan dos controles:
 
 - `Ventana Savitzky-Golay`: numero impar de puntos, de `3` a `55`.
-- `Valor polinomico`: `1` a `4`. En v2_3 la orientacion visual se invierte: izquierda `Polinomio 4`, derecha `Polinomio 1`.
+- `Grado polinómico`: `1` a `4`. En v2_3 la orientación visual se invierte: izquierda `Polinomio 4`, derecha `Polinomio 1`.
 
 Regla obligatoria:
 

@@ -31,6 +31,8 @@ Selecciona una vía, un sentido y dos puntos kilométricos; la herramienta obtie
 4. Ajusta los parámetros solo si lo necesitas.
 5. Pulsa **Generar**.
 
+El botón **? Ayuda** de la cabecera abre un manual breve sin salir de la aplicación. Incluye el significado de la resolución del MDT, el intervalo de muestreo y los suavizados.
+
 La aplicación se abre en local, normalmente en `http://127.0.0.1:8025/`, y guarda las salidas en `Resultados/`.
 
 ## Configuración de los datos
@@ -146,4 +148,4 @@ Los datos, mapas base y servicios de terceros mantienen sus propias condiciones 
 
 ---
 
-**Versión actual:** `v3.0.0`
+**Versión actual:** `v3.1.1`

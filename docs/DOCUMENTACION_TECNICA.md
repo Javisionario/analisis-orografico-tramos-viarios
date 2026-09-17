@@ -1,6 +1,6 @@
 # Documentación técnica
 
-Esta documentación reúne la información técnica de la **Herramienta de Análisis Orográfico de Tramos Viarios v3.0.0**. El README principal explica el uso habitual; este documento conserva el detalle sobre parámetros, metodología, salidas y composición.
+Esta documentación reúne la información técnica de la **Herramienta de Análisis Orográfico de Tramos Viarios v3.1.1**. El README principal explica el uso habitual; este documento conserva el detalle sobre parámetros, metodología, salidas y composición.
 
 ## 1. Arquitectura general
 
@@ -155,6 +155,8 @@ La recomendación general es no utilizar un intervalo inferior a aproximadamente
 Se aplica sobre la serie de cotas antes de calcular la pendiente.
 
 La interfaz ofrece un control simple `0-10` y una configuración avanzada mediante Savitzky-Golay.
+
+Desde v3.1.1, el botón **? Ayuda** de la cabecera abre un manual breve de uso. Resume el flujo de cálculo, la diferencia entre resolución del MDT e intervalo de muestreo y el papel de los dos suavizados; no sustituye a esta documentación técnica.
 
 ### Cálculo de pendiente
 
@@ -459,5 +461,5 @@ Los documentos `version_v2_*.md` forman parte del historial de desarrollo y no r
 La versión pública actual es:
 
 ```text
-v3.0.0
+v3.1.1
 ```

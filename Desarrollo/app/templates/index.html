@@ -12,6 +12,9 @@
         <h1>Herramienta de Análisis Orográfico de Tramos Viarios</h1>
         <p>Define un tramo y genera mapas, perfiles longitudinales y datos auxiliares. <strong>{{ version }}</strong></p>
       </div>
+      <button id="openHelp" class="help-toggle" type="button" aria-haspopup="dialog" aria-controls="helpPanel">
+        <span aria-hidden="true">?</span> Ayuda
+      </button>
     </header>
 
     <main class="app-layout">
@@ -56,23 +59,32 @@
           <details class="side-section" open>
             <summary>Configuración de entrada</summary>
             <div class="section-body">
-              <label class="slider">
-                <span>Intervalo de muestreo altimétrico <strong id="sampleValue">75 m</strong></span>
-                <input id="intervaloMuestreo" name="intervalo_muestreo_m" type="range" min="20" max="250" step="5" value="75">
-                <em id="sampleHelp">Mínimo 4x tamaño del píxel del MDT.</em>
-              </label>
+              <div class="setting-with-help">
+                <label class="slider">
+                  <span>Intervalo de muestreo altimétrico <strong id="sampleValue">75 m</strong></span>
+                  <input id="intervaloMuestreo" name="intervalo_muestreo_m" type="range" min="20" max="250" step="5" value="75">
+                  <em id="sampleHelp">Mínimo 4x tamaño del píxel del MDT.</em>
+                </label>
+                <button class="parameter-help" type="button" data-help-target="help-sampling" aria-label="Ayuda sobre intervalo de muestreo">?</button>
+              </div>
 
-              <label class="slider">
-                <span>Suavizado de elevaciones <strong id="smoothValue">4/10</strong></span>
-                <input id="suavizado" name="suavizado_elevaciones" type="range" min="0" max="10" step="1" value="4">
-                <em id="smoothHelp">Reduce ruido de la cota del perfil.</em>
-              </label>
+              <div class="setting-with-help">
+                <label class="slider">
+                  <span>Suavizado de elevaciones <strong id="smoothValue">4/10</strong></span>
+                  <input id="suavizado" name="suavizado_elevaciones" type="range" min="0" max="10" step="1" value="4">
+                  <em id="smoothHelp">Reduce ruido de la cota del perfil.</em>
+                </label>
+                <button class="parameter-help" type="button" data-help-target="help-elevation-smoothing" aria-label="Ayuda sobre suavizado de elevaciones">?</button>
+              </div>
 
-              <label class="slider">
-                <span>Suavizado de pendientes <strong id="slopeSmoothValue">4/10</strong></span>
-                <input id="suavizadoPendientes" name="suavizado_pendientes" type="range" min="0" max="10" step="1" value="4">
-                <em id="slopeSmoothHelp">Reduce ruido de la pendiente sin modificar la cota.</em>
-              </label>
+              <div class="setting-with-help">
+                <label class="slider">
+                  <span>Suavizado de pendientes <strong id="slopeSmoothValue">4/10</strong></span>
+                  <input id="suavizadoPendientes" name="suavizado_pendientes" type="range" min="0" max="10" step="1" value="4">
+                  <em id="slopeSmoothHelp">Reduce ruido de la pendiente sin modificar la cota.</em>
+                </label>
+                <button class="parameter-help" type="button" data-help-target="help-slope-smoothing" aria-label="Ayuda sobre suavizado de pendientes">?</button>
+              </div>
 
               <label class="slider">
                 <span>Umbral de pendiente anómala <strong id="anomalyValue">20 %</strong></span>
@@ -83,14 +95,17 @@
               <details class="nested-section smooth-advanced">
                 <summary>Suavizado avanzado de elevaciones</summary>
                 <div class="section-body compact">
-                  <label class="check"><input id="sgAdvanced" name="suavizado_elevaciones_avanzado" type="checkbox"> Suavizado Savitzky-Golay avanzado (Elevaciones)</label>
+                  <div class="check-with-help">
+                    <label class="check"><input id="sgAdvanced" name="suavizado_elevaciones_avanzado" type="checkbox"> Suavizado Savitzky-Golay avanzado (Elevaciones)</label>
+                    <button class="parameter-help" type="button" data-help-target="help-savitzky-golay" aria-label="Ayuda sobre Savitzky-Golay">?</button>
+                  </div>
                   <div id="sgAdvancedControls" class="advanced-controls">
                     <label class="slider">
-                      <span>Ventana Savitzky-Golay <strong id="sgWindowValue">9 puntos · 675 m</strong></span>
+                      <span>Ventana Savitzky-Golay <strong id="sgWindowValue">13 puntos · 975 m</strong></span>
                       <input id="sgWindow" name="sg_elevaciones_window_puntos" type="range" min="3" max="55" step="2" value="13">
                     </label>
                     <label class="slider">
-                      <span>Valor polinómico <strong id="sgPolyorderValue">Polinomio 2</strong></span>
+                      <span>Grado polinómico <strong id="sgPolyorderValue">Polinomio 2</strong></span>
                       <input id="sgPolyorder" name="sg_elevaciones_polyorder_visual" type="range" min="1" max="4" step="1" value="3">
                     </label>
                   </div>
@@ -107,7 +122,7 @@
                       <input id="sgSlopeWindow" name="sg_pendientes_window_puntos" type="range" min="3" max="55" step="2" value="13">
                     </label>
                     <label class="slider">
-                      <span>Valor polinÃ³mico <strong id="sgSlopePolyorderValue">Polinomio 2</strong></span>
+                      <span>Grado polinómico <strong id="sgSlopePolyorderValue">Polinomio 2</strong></span>
                       <input id="sgSlopePolyorder" name="sg_pendientes_polyorder_visual" type="range" min="1" max="4" step="1" value="3">
                     </label>
                   </div>
@@ -200,13 +215,16 @@
               <details class="nested-section">
                 <summary>Avanzado</summary>
                 <div class="section-body compact">
-                  <label>
-                    <span>Resolución MDT</span>
-                    <select name="resolucion_mdt" id="resolucionMdt">
-                      <option value="5" selected>5 m</option>
-                      <option value="25">25 m</option>
-                    </select>
-                  </label>
+                  <div class="setting-with-help">
+                    <label>
+                      <span>Resolución MDT</span>
+                      <select name="resolucion_mdt" id="resolucionMdt">
+                        <option value="5" selected>5 m</option>
+                        <option value="25">25 m</option>
+                      </select>
+                    </label>
+                    <button class="parameter-help" type="button" data-help-target="help-resolution" aria-label="Ayuda sobre resolución MDT">?</button>
+                  </div>
                   <label class="plain-check"><input name="mostrar_anotaciones_curvas_nivel" type="checkbox" checked> Mostrar anotaciones de líneas de nivel</label>
                   <label class="slider">
                     <span>Transparencia elevaciones en mapa de localización <strong id="alphaLocalizacionValue">34 %</strong></span>
@@ -246,6 +264,78 @@
         <div id="results" class="results"></div>
       </section>
     </main>
+
+    <div id="helpOverlay" class="help-overlay" hidden>
+      <aside id="helpPanel" class="help-panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle" tabindex="-1">
+        <div class="help-panel-header">
+          <div>
+            <p class="help-eyebrow">Manual breve</p>
+            <h2 id="helpTitle">Ayuda de uso</h2>
+          </div>
+          <button id="closeHelp" class="help-close" type="button" aria-label="Cerrar ayuda">×</button>
+        </div>
+        <div class="help-content">
+          <section id="help-profile-flow">
+            <h3>Cómo se obtienen el perfil y las elevaciones</h3>
+            <p class="help-flow"><strong>MDT <span>→</span> muestreo de cotas <span>→</span> suavizado de elevaciones <span>→</span> cálculo de pendiente <span>→</span> suavizado de pendiente</strong></p>
+            <p>Esta herramienta cruza la geometría de la red viaria con el <strong>Modelo Digital del Terreno (MDT) del IGN</strong>. Un MDT es una representación digital de la superficie del terreno formada por una malla regular de celdas, cada una con un valor de elevación.</p>
+            <p>El MDT representa el terreno, no necesariamente la rasante real de la carretera. En <strong>túneles, viaductos, pasos superiores y otras estructuras</strong> pueden aparecer discrepancias. También pueden existir pequeñas imprecisiones en zonas de <strong>arbolado denso</strong>, donde la estimación e interpolación de la superficie del terreno puede ser menos fiable.</p>
+          </section>
+
+          <section id="help-resolution">
+            <h3>Resolución del MDT</h3>
+            <p>La resolución describe el tamaño aproximado de las celdas del terreno: un MDT de <strong>5 m</strong> utiliza celdas de unos 5 × 5 m; uno de <strong>25 m</strong>, de unos 25 × 25 m.</p>
+            <p>Una celda menor aporta más detalle espacial del terreno, pero no significa que la rasante de la carretera se conozca con esa precisión.</p>
+          </section>
+
+          <section id="help-sampling">
+            <h3>Intervalo de muestreo</h3>
+            <p>Es la distancia recorrida sobre la carretera entre dos puntos consecutivos donde se obtiene la elevación. Por ejemplo, <strong>75 m</strong> equivale aproximadamente a una lectura cada 75 m.</p>
+            <p>Reducir mucho el intervalo no crea información nueva si el MDT no tiene ese nivel de detalle. De hecho, un muestreo demasiado denso puede hacer visibles pequeñas irregularidades del raster y producir pendientes artificialmente variables.</p>
+            <p>Como orientación, la herramienta recomienda no bajar de unas <strong>cuatro veces el tamaño de píxel del MDT</strong>.</p>
+            <div class="help-examples">
+              <div class="help-example help-example-balanced"><strong>MDT 5 m + muestreo 75 m</strong><p>Configuración habitual equilibrada.</p></div>
+              <div class="help-example help-example-dense"><strong>MDT 25 m + muestreo 20 m</strong><p>El muestreo no aporta realmente detalle de 20 m y puede introducir ruido innecesario.</p></div>
+            </div>
+          </section>
+
+          <section id="help-smoothing">
+            <h3>Por qué se suavizan las curvas</h3>
+            <p>Las cotas obtenidas del MDT pueden presentar pequeñas oscilaciones debidas al propio raster, al terreno y a la posición de la carretera respecto a las celdas. Al calcular la pendiente, estas pequeñas variaciones pueden amplificarse.</p>
+            <p>El objetivo del suavizado es <strong>reducir el ruido y las variaciones de alta frecuencia que no representan correctamente la geometría general de la carretera</strong>, conservando en lo posible la tendencia y la forma del perfil.</p>
+            <div class="help-subsections">
+              <section id="help-elevation-smoothing">
+                <h4>Suavizado de elevaciones</h4>
+                <p>Reduce pequeñas oscilaciones en la serie de cotas <strong>antes de calcular la pendiente</strong>.</p>
+              </section>
+              <section id="help-slope-smoothing">
+                <h4>Suavizado de pendientes</h4>
+                <p>Reduce el ruido de la pendiente calculada <strong>sin modificar la serie de cotas que sirve de base</strong>.</p>
+              </section>
+            </div>
+          </section>
+
+          <section id="help-savitzky-golay">
+            <h3>Savitzky–Golay</h3>
+            <p>El suavizado emplea un algoritmo conocido como <strong>filtro de Savitzky–Golay</strong>.</p>
+            <p>Este filtro ajusta sucesivamente un polinomio local sobre ventanas de puntos próximos. De este modo atenúa las oscilaciones manteniendo mejor la forma general de la curva que un simple promedio. Su comportamiento depende principalmente de <strong>dos parámetros</strong>.</p>
+            <figure class="help-figure">
+              <img src="/static/help/savitzky_golay_local_regression_wl045_pd04.gif" alt="Animación del ajuste local del filtro Savitzky-Golay">
+              <figcaption>Animación de regresión local Savitzky–Golay. Fuente: <a href="https://commons.wikimedia.org/wiki/File:Savitzky_golay_local_regression_wl045_pd04.gif" target="_blank" rel="noopener noreferrer">Wikimedia Commons</a>, MothNik, <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0 1.0</a>.</figcaption>
+            </figure>
+            <h4>Tamaño de ventana</h4>
+            <p>Es el número de puntos utilizados en cada ajuste y debe ser impar. Una ventana mayor produce un suavizado más intenso: elimina oscilaciones cortas, aunque también puede hacer desaparecer parte del detalle local.</p>
+            <p>La interfaz muestra además su equivalencia espacial. Por ejemplo:</p>
+            <p><strong>13 puntos × 75 m ≈ 975 m</strong></p>
+            <p>Esto significa que cada ajuste utiliza información correspondiente aproximadamente a 975 m de recorrido.</p>
+            <h4>Grado polinómico</h4>
+            <p>Controla la flexibilidad del polinomio ajustado dentro de cada ventana.</p>
+            <p>Los <strong>grados bajos</strong> generan curvas más simples y estables y, en general, tienden a suavizar más. Los <strong>grados altos</strong> permiten conservar mejor cambios y curvaturas locales, pero también pueden seguir pequeñas oscilaciones de los datos.</p>
+            <p>El grado polinómico siempre debe ser <strong>menor que el número de puntos de la ventana</strong>.</p>
+          </section>
+        </div>
+      </aside>
+    </div>
 
     <script src="/static/js/app.js"></script>
   </body>

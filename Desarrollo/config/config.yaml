@@ -37,7 +37,7 @@ mdt:
   timeout_s: 45
   resoluciones_preferidas_m: [5, 25]
   max_pixeles: 4000000
-  user_agent: "Analisis-Orografico/3.0.0"
+  user_agent: "Analisis-Orografico/3.1.0"
 
 mapas:
   dpi: 600

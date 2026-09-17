@@ -52,6 +52,11 @@ const alphaLocalizacion = document.querySelector("#alphaLocalizacion");
 const alphaPendientes = document.querySelector("#alphaPendientes");
 const alphaLocalizacionValue = document.querySelector("#alphaLocalizacionValue");
 const alphaPendientesValue = document.querySelector("#alphaPendientesValue");
+const openHelp = document.querySelector("#openHelp");
+const closeHelp = document.querySelector("#closeHelp");
+const helpOverlay = document.querySelector("#helpOverlay");
+const helpPanel = document.querySelector("#helpPanel");
+const helpBackground = document.querySelectorAll("body > .topbar, body > .app-layout");
 
 let selectedRoad = null;
 let roadCache = null;
@@ -59,6 +64,7 @@ let roadLoading = null;
 let loadingTimer = null;
 let loadingStartedAt = null;
 let lastProgress = null;
+let helpTrigger = null;
 const SUGGESTION_LIMIT = 90;
 const PK_INTERVALS = [1, 5, 10, 25, 50, 100, 250];
 const PROGRESS_PHASES = [
@@ -92,6 +98,38 @@ let cartoShowPressed = false;
 
 function setStatus(title, text) {
   statusBox.innerHTML = `<h2>${title}</h2><p>${text}</p>`;
+}
+
+function openHelpPanel(targetId = null, trigger = null) {
+  if (!helpOverlay || !helpPanel) return;
+  helpTrigger = trigger || document.activeElement;
+  helpBackground.forEach((element) => {
+    element.inert = true;
+    element.setAttribute("aria-hidden", "true");
+  });
+  helpOverlay.hidden = false;
+  const target = targetId ? document.getElementById(targetId) : null;
+  const content = helpPanel.querySelector(".help-content");
+  if (content) content.scrollTop = 0;
+  if (target) target.scrollIntoView({ block: "start" });
+  helpPanel.focus();
+}
+
+function closeHelpPanel() {
+  if (!helpOverlay || helpOverlay.hidden) return;
+  helpOverlay.hidden = true;
+  helpBackground.forEach((element) => {
+    element.inert = false;
+    element.removeAttribute("aria-hidden");
+  });
+  if (helpTrigger && typeof helpTrigger.focus === "function") helpTrigger.focus();
+  helpTrigger = null;
+}
+
+function helpFocusableElements() {
+  if (!helpPanel) return [];
+  return [...helpPanel.querySelectorAll("a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
 }
 
 function formatElapsed(seconds) {
@@ -966,6 +1004,39 @@ function renderResults(data) {
 roadInput.addEventListener("input", refreshRoadSuggestions);
 roadInput.addEventListener("blur", () => setTimeout(() => { suggestionsBox.hidden = true; }, 180));
 roadInput.addEventListener("focus", refreshRoadSuggestions);
+if (openHelp) openHelp.addEventListener("click", () => openHelpPanel(null, openHelp));
+if (closeHelp) closeHelp.addEventListener("click", closeHelpPanel);
+if (helpOverlay) {
+  helpOverlay.addEventListener("click", (event) => {
+    if (event.target === helpOverlay) closeHelpPanel();
+  });
+}
+document.querySelectorAll(".parameter-help").forEach((button) => {
+  button.addEventListener("click", () => openHelpPanel(button.dataset.helpTarget, button));
+});
+document.addEventListener("keydown", (event) => {
+  if (!helpOverlay || helpOverlay.hidden) return;
+  if (event.key === "Escape") {
+    closeHelpPanel();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = helpFocusableElements();
+  if (!focusable.length) {
+    event.preventDefault();
+    helpPanel.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === helpPanel)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
 clearRoad.addEventListener("click", clearRoadField);
 document.querySelector("#pkInicio").addEventListener("blur", () => validateMainPk(false));
 document.querySelector("#pkFin").addEventListener("blur", () => validateMainPk(false));

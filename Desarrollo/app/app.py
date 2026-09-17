@@ -24,8 +24,8 @@ from src.utils import load_config, resolve_tool_path
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "v3.0.0"
-app = FastAPI(title="Herramienta tramos y pendientes", version="3.0.0")
+APP_VERSION = "v3.1.1"
+app = FastAPI(title="Herramienta tramos y pendientes", version="3.1.1")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 # El compositor mantiene diagnósticos por generación; serializar jobs evita cruzarlos.

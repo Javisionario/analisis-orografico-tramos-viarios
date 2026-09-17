@@ -292,7 +292,7 @@ def tile_bytes(
     failures: list[tuple[str, Exception]] = []
     for url, cache in candidates:
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Analisis-Orografico/3.0.0"})
+            request = urllib.request.Request(url, headers={"User-Agent": "Analisis-Orografico/3.1.0"})
             with urllib.request.urlopen(request, timeout=TILE_TIMEOUT_SECONDS) as response:
                 data = response.read()
             if not valid_tile_bytes(data):
