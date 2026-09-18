@@ -14,7 +14,8 @@ from .io_datos import load_admin, load_lineas, load_lineas_bbox, load_pks, resol
 from .mapas import bounds_mapa_principal_lonlat, generar_mapa_localizacion, generar_mapa_pendientes
 from .mdt_wcs import obtener_mdt
 from .pendientes import exportar_segmentos, segmentar_pendientes
-from .perfiles import calcular_halo_perfil, exportar_perfil, generar_perfil
+from .perfil_grafico import exportar_perfil
+from .perfiles import calcular_halo_perfil, generar_perfil
 from .tramo import TramoError, ajustar_pk_a_rango, extraer_tramo, rango_disponible_sentido
 from .utils import ensure_dir, format_pk, json_dump, load_config, method_notes, now_slug, parse_interval, resolve_tool_path, slugify
 

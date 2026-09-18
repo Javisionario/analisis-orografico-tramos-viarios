@@ -10,7 +10,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(ROOT))
 
-from src.perfiles import _apply_slope_anomaly_threshold, _slope_axis  # noqa: E402
+from src.perfil_grafico import _slope_axis  # noqa: E402
+from src.perfiles import _apply_slope_anomaly_threshold  # noqa: E402
 
 
 class SlopeAxisTests(unittest.TestCase):
