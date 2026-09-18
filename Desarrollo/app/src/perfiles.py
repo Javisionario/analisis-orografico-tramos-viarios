@@ -24,7 +24,7 @@ from .utils import as_float, format_pk
 
 SG_TABLE: dict[int, dict[str, Any]] = {
     0: {"window": 0, "polyorder": 0, "label": "sin suavizado"},
-    1: {"window": 3, "polyorder": 4, "label": "efecto muy leve"},
+    1: {"window": 3, "polyorder": 2, "label": "efecto muy leve"},
     2: {"window": 5, "polyorder": 3, "label": "leve"},
     3: {"window": 9, "polyorder": 3, "label": "leve-medio"},
     4: {"window": 13, "polyorder": 2, "label": "medio-bajo"},
@@ -407,13 +407,6 @@ def _apply_slope_anomaly_threshold(slope_smoothed: np.ndarray, threshold_pct: fl
     return represented, anomalies
 
 
-def _nice_y_step(span: float) -> float:
-    if span <= 0:
-        return 10.0
-    candidates = [10, 20, 25, 50, 100, 200, 250, 500, 1000]
-    return min(candidates, key=lambda value: abs((span / value) - 6))
-
-
 def _nice_y_axis(values: np.ndarray, mode: str, max_ticks: int = 7) -> dict[str, float | int | str]:
     finite = values[np.isfinite(values)]
     if len(finite) == 0:
@@ -546,7 +539,7 @@ def _profile_summary(df: pd.DataFrame, y_axis: dict[str, Any], threshold_pct: fl
             "umbral_pendiente_anomala_pct": float(threshold_pct),
             "n_lecturas_anomalas": int(np.count_nonzero(anomalies)),
             "criterio_aplanado": "abs(pendiente_suavizada_pct) > umbral; pendiente_representada_pct = 0 %",
-            "suavizado_bordes_visual": "El amarillo solo marca tramos con ambos extremos anomalos; los segmentos de transicion conservan el color de pendiente representada.",
+            "suavizado_bordes_visual": "El amarillo marca cualquier tramo visual con al menos un extremo anomalo, incluidos los segmentos de transicion.",
         },
     }
 

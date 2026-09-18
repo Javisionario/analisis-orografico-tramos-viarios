@@ -194,6 +194,8 @@ Se distinguen:
 - `pendiente_suavizada_pct`;
 - `pendiente_representada_pct`.
 
+La anomalía se determina cuando `abs(pendiente_suavizada_pct) > umbral`; en ese caso `pendiente_anomala = true` y la representación pasa a `0 %`.
+
 El resumen puede agrupar rangos contiguos afectados e informar de los PK asociados.
 
 ## 7. Parámetros de interfaz
@@ -262,13 +264,19 @@ Con `Ambos` se generan salidas separadas por sentido.
 
 Proveedor predeterminado.
 
-Servicio TMS:
+El mapa principal y el mapa de localización solicitan primero el WMS de IGN:
+
+```text
+IGNBaseTodo-gris
+```
+
+Si el WMS falla, usan como fallback el TMS de IGN:
 
 ```text
 https://tms-ign-base.idee.es/1.0.0/IGNBaseGris/{z}/{x}/{y}.jpeg
 ```
 
-La herramienta adapta internamente el eje Y al esquema TMS.
+La herramienta adapta internamente el eje Y al esquema TMS solo cuando usa ese fallback.
 
 No requiere API key.
 
@@ -312,7 +320,7 @@ La composición integra:
 - mapa de situación;
 - leyendas y escala.
 
-El mapa de localización utiliza un offset de zoom específico para obtener una cartografía más generalizada:
+Cuando el mapa de localización usa el fallback TMS, aplica un offset de zoom específico para obtener una cartografía más generalizada:
 
 ```text
 LOCATION_TILE_ZOOM_OFFSET = -1

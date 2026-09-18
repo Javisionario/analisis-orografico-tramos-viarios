@@ -62,7 +62,7 @@ Internamente el slider controla una ventana Savitzky-Golay en numero impar de pu
 | Slider | Ventana teorica | Polyorder teorico | Descripcion |
 |---:|---:|---:|---|
 | 0 | 0 | 0 | Sin suavizado |
-| 1 | 3 | 4 | Efecto muy leve |
+| 1 | 3 | 2 | Efecto muy leve |
 | 2 | 5 | 3 | Leve |
 | 3 | 9 | 3 | Leve-medio |
 | 4 | 13 | 2 | Medio-bajo, valor por defecto |
@@ -100,14 +100,13 @@ El filtro de anomalias se aplica despues del muestreo y del suavizado. No modifi
 
 Funcionamiento:
 
-- se calcula `pendiente_bruta_pct`;
-- si `abs(pendiente_bruta_pct) <= umbral`, se conserva como `pendiente_representada_pct`;
-- si `abs(pendiente_bruta_pct) > umbral`, se marca `pendiente_anomala = true`;
-- en ese caso, `pendiente_representada_pct = signo * umbral`.
+- se calcula `pendiente_bruta_pct` y se aplica el suavizado de pendientes para obtener `pendiente_suavizada_pct`;
+- si `abs(pendiente_suavizada_pct) > umbral`, se marca `pendiente_anomala = true`;
+- en ese caso, `pendiente_representada_pct = 0 %`; en los demás casos conserva el valor suavizado.
 
-El dato bruto siempre se conserva en CSV y en los segmentos GeoJSON/GPKG. La representacion usa la pendiente filtrada para que un pico aislado no destruya la escala del perfil ni la lectura del mapa.
+El dato bruto y el suavizado se conservan en CSV y en los segmentos GeoJSON/GPKG para trazabilidad. La representacion usa la pendiente filtrada para que un pico aislado no destruya la escala del perfil ni la lectura del mapa.
 
-En mapas y perfil, las anomalias se pintan en amarillo intenso `#ffff00`. No se anade a la leyenda de pendientes para mantenerla limpia; el resumen de resultados indica cuantas lecturas o segmentos se han aplanado.
+En el perfil, las anomalias se pintan con `#c2b206`; en el mapa, con amarillo intenso `#ffff00`. No se anade a la leyenda de pendientes para mantenerla limpia; el resumen de resultados indica cuantas lecturas o segmentos se han aplanado.
 
 Muestreo, suavizado y anomalias son tres pasos distintos:
 
@@ -413,10 +412,14 @@ Pipeline aplicado:
 3. Suavizado de elevaciones: `cota_suavizada_m`.
 4. Derivada numerica de `cota_suavizada_m`: `pendiente_bruta_pct`.
 5. Suavizado de pendientes: `pendiente_suavizada_pct`.
-6. Aplanamiento por umbral de anomalia sobre `pendiente_suavizada_pct`.
+6. Deteccion de anomalia: `abs(pendiente_suavizada_pct) > umbral`; si se cumple, `pendiente_anomala = true` y `pendiente_representada_pct = 0 %`.
 7. Resultado de representacion: `pendiente_representada_pct`.
 
 El perfil con pendiente y el mapa de pendientes usan `pendiente_representada_pct`. El perfil sin pendiente solo usa las cotas y no depende del suavizado de pendientes.
+
+### Contexto de calculo
+
+Cuando hay carretera disponible, se incorpora un halo interno para mejorar el comportamiento en los extremos. Su tamaño deriva de las ventanas efectivas de suavizado de elevaciones y pendientes, más una muestra necesaria para el gradiente. El halo solo participa en el cálculo: las salidas continúan limitadas exactamente al tramo solicitado.
 
 El CSV de perfil incluye `pendiente_suavizada_pct`. `pendiente_perfil_pct` se mantiene como alias de `pendiente_representada_pct`.
 
@@ -441,6 +444,10 @@ Cada rango anomalo incluye tambien:
 - `pk_pendiente_bruta_max`.
 
 Estos valores se calculan con `pendiente_bruta_pct`; la representacion sigue usando `pendiente_representada_pct`.
+
+### Eje de pendientes
+
+La escala del eje secundario de pendientes se determina con el máximo absoluto representado: hasta `2,25 %`, eje `±2,5 %`; hasta `4,5 %`, eje `±5 %`; por encima, escala automática con los extremos reales y un margen.
 
 ### Parametros empleados en resultados
 

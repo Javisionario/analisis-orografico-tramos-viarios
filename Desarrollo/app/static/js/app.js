@@ -81,7 +81,7 @@ const PROGRESS_PHASES = [
 ];
 const SG_TABLE = {
   0: { window: 0, polyorder: 0, label: "sin suavizado" },
-  1: { window: 3, polyorder: 4, label: "efecto muy leve" },
+  1: { window: 3, polyorder: 2, label: "efecto muy leve" },
   2: { window: 5, polyorder: 3, label: "leve" },
   3: { window: 9, polyorder: 3, label: "leve-medio" },
   4: { window: 13, polyorder: 2, label: "medio-bajo" },
@@ -777,102 +777,6 @@ function metric(label, value) {
   return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
-function renderSummaryCard(data) {
-  const meta = data.metadata || {};
-  const scope = meta.scopes?.[0] || {};
-  const tramo = scope.tramo || {};
-  const perfil = scope.perfil || {};
-  const anomalias = scope.anomalias || perfil.anomalias || {};
-  const nLecturas = Number(anomalias.n_lecturas_anomalas || 0);
-  const nSegmentos = Number(scope.pendientes?.n_segmentos_anomalos || 0);
-  const anomalyText = nLecturas || nSegmentos
-    ? `${nLecturas} lecturas / ${nSegmentos} segmentos aplanados`
-    : "Sin lecturas aplanadas";
-  return `
-    <section class="summary-card">
-      <div>
-        <h3>Resumen del tramo</h3>
-        <p>${tramo.carretera || meta.parametros?.carretera || ""} · ${tramo.sentido || meta.parametros?.sentido || ""}</p>
-      </div>
-      <div class="metrics-grid">
-        ${metric("Vía", tramo.carretera || meta.parametros?.carretera || "Sin dato")}
-        ${metric("Sentido", tramo.sentido || meta.parametros?.sentido || "Sin dato")}
-        ${metric("PK inicio", pkText(tramo.pk_inicio))}
-        ${metric("PK fin", pkText(tramo.pk_fin))}
-        ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
-        ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
-        ${metric("Altitud mínima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
-        ${metric("Altitud máxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
-        ${metric("Pendiente máxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
-        ${metric("Pendiente mínima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
-        ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
-        ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
-        ${metric("Umbral anomalías", numberText(anomalias.umbral_pendiente_anomala_pct, " %", 0))}
-        ${metric("Anomalias", anomalyText)}
-      </div>
-      ${nLecturas || nSegmentos ? "<p class='summary-warning'>Hay lecturas aplanadas por superar el umbral de pendiente anómala.</p>" : ""}
-    </section>
-  `;
-}
-
-function renderSummaryCardV2(data) {
-  const meta = data.metadata || {};
-  const scopes = meta.scopes?.length ? meta.scopes : [{}];
-  const params = meta.parametros || {};
-  const alt = meta.altimetria || scopes[0]?.altimetria || {};
-  const mdt = meta.mdt || {};
-  const usedResolution = alt.resolucion_mdt_usada ?? mdt.resolucion_m ?? mdt.resolucion_usada;
-  const paramsHtml = `
-    <section class="summary-card compact">
-      <div>
-        <h3>Parámetros empleados</h3>
-        <p>Configuración usada en esta generación.</p>
-      </div>
-      <div class="metrics-grid">
-        ${metric("Suavizado", params.suavizado_modo === "avanzado" ? `Avanzado · ${params.sg_window_puntos || "?"} puntos · polinomio ${params.sg_polyorder || "?"}` : `${params.suavizado ?? 4}/10`)}
-        ${metric("Muestreo altimétrico", numberText(params.intervalo_muestreo_m ?? 75, " m", 0))}
-        ${metric("Segmento pendiente", params.longitud_intervalo_pendiente_m ? numberText(params.longitud_intervalo_pendiente_m, " m", 0) : "Auto")}
-        ${metric("Umbral de anomalía", numberText(params.umbral_pendiente_anomala_pct ?? 20, " %", 1))}
-        ${metric("Fuente altimétrica usada", alt.fuente_altimetrica_usada_label || "Sin dato")}
-        ${metric("Resolución MDT solicitada", `${alt.resolucion_mdt_solicitada ?? params.resolucion_mdt ?? "5"} m`)}
-        ${metric("Resolución MDT usada", usedResolution ? `${usedResolution} m` : "No disponible")}
-        ${metric("Estado MDT", alt.estado_mdt || (mdt.path ? "Disponible" : "No disponible"))}
-        ${metric("Fallback aplicado", alt.fallback_altimetrico || "Sin dato")}
-      </div>
-    </section>
-  `;
-  const scopesHtml = scopes.map((scope) => {
-    const tramo = scope.tramo || {};
-    const perfil = scope.perfil || {};
-    const anomalias = scope.anomalias || perfil.anomalias || {};
-    const anomalyNote = renderAnomalyRanges(anomalias);
-    return `
-      <section class="summary-card">
-        <div>
-          <h3>Resumen del tramo</h3>
-          <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
-        </div>
-        <div class="metrics-grid">
-          ${metric("Via", tramo.carretera || params.carretera || "Sin dato")}
-          ${metric("Sentido", tramo.sentido || params.sentido || "Sin dato")}
-          ${metric("PK inicio", pkText(tramo.pk_inicio))}
-          ${metric("PK fin", pkText(tramo.pk_fin))}
-          ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
-          ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
-          ${metric("Altitud minima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
-          ${metric("Altitud maxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
-          ${metric("Pendiente maxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
-          ${metric("Pendiente minima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
-          ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
-          ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
-        </div>
-        ${anomalyNote}
-      </section>
-    `;
-  }).join("");
-  return scopesHtml + paramsHtml;
-}
-
 function renderAnomalyRanges(anomalias) {
   const ranges = anomalias.detalle_rangos_anomalos || [];
   if (!ranges.length) return "<p class='summary-muted'>Sin pendientes aplanadas.</p>";
@@ -899,7 +803,7 @@ function smoothParamText(params, prefix, legacy = false) {
   return `${params[prefix] ?? (legacy ? params.suavizado : 4) ?? 4}/10`;
 }
 
-function renderSummaryCardV3(data) {
+function renderSummaryCard(data) {
   const meta = data.metadata || {};
   const scopes = meta.scopes?.length ? meta.scopes : [{}];
   const params = meta.parametros || {};
@@ -956,8 +860,6 @@ function renderSummaryCardV3(data) {
   return scopesHtml + paramsHtml;
 }
 
-renderSummaryCard = renderSummaryCardV3;
-
 function renderZipButtons(zipDownloadsData) {
   zipDownloads.innerHTML = "";
   const entries = [
@@ -984,8 +886,6 @@ function renderResults(data) {
   const profilesWithoutSlope = profileImages.filter((item) => item.name.toLowerCase().includes("_sin_pendiente"));
   const otherProfiles = profileImages.filter((item) => !profilesWithSlope.includes(item) && !profilesWithoutSlope.includes(item));
   const dataItems = downloads.filter((item) => fileKind(item) === "datos");
-  const meta = data.metadata || {};
-  const scope = meta.scopes?.[0]?.tramo || {};
   const info = `
     <div class="run-info">
       <strong>Proceso completado</strong>
@@ -1090,32 +990,6 @@ document.querySelector("#pkInicio").addEventListener("input", updateSmoothHelp);
 document.querySelector("#pkFin").addEventListener("input", updateSmoothHelp);
 document.querySelector("#pkInicio").addEventListener("input", updatePkControls);
 document.querySelector("#pkFin").addEventListener("input", updatePkControls);
-
-form.addEventListener("submit-disabled", async (event) => {
-  event.preventDefault();
-  resultsBox.innerHTML = "";
-  zipDownloads.innerHTML = "";
-  setStatus("Generando", "El backend está creando mapas, perfil y exports.");
-  const button = form.querySelector(".primary");
-  button.disabled = true;
-  try {
-    await ensureSelectedRoad();
-    await validateMainPk(true);
-    const response = await fetch("/generar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payloadFromForm()),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Error de generación");
-    setStatus("Generación completada", `Salida: ${data.job_id}`);
-    renderResults(data);
-  } catch (error) {
-    setStatus("Error", String(error.message || error));
-  } finally {
-    button.disabled = false;
-  }
-});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
