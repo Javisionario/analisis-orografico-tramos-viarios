@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import geopandas as gpd
 from rasterio.warp import transform_bounds
 
-from .compositor_cartografico_pil import reset_tile_error_state
+from .basemaps import reset_tile_error_state
 from .estilos import resolver_fuente_mpl
 from .io_datos import load_admin, load_lineas, load_lineas_bbox, load_pks, resolve_road_name
 from .mapas import bounds_mapa_principal_lonlat, generar_mapa_localizacion, generar_mapa_pendientes
