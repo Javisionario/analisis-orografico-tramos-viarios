@@ -96,7 +96,7 @@ class IgnWmsBasemapTests(unittest.TestCase):
         self.assertEqual(config["metodo"], "tms_fallback")
         self.assertTrue(config["fallback_tms_usado"])
 
-    def test_location_ign_keeps_existing_tms_path(self) -> None:
+    def test_location_ign_prefers_wms_without_calling_tms(self) -> None:
         canvas = Image.new("RGBA", (4000, 3000))
         config: dict[str, object] = {}
         with patch("src.compositor_cartografico_pil.ign_wms_basemap_raster", return_value=True) as wms, patch(
@@ -104,10 +104,31 @@ class IgnWmsBasemapTests(unittest.TestCase):
         ) as tms:
             ok = compositor.render_report_basemap(self.bounds, canvas, self.clip, config, location=True, mapa_base="ign_gris")
         self.assertTrue(ok)
-        wms.assert_not_called()
+        wms.assert_called_once_with(
+            self.bounds,
+            canvas,
+            self.clip,
+            compositor.LOC_BASEMAP_BRIGHTNESS,
+            compositor.LOC_BASEMAP_SATURATION,
+            compositor.LOC_BASEMAP_GAMMA,
+        )
+        tms.assert_not_called()
+        self.assertEqual(config["metodo"], "wms")
+        self.assertFalse(config["fallback_tms_usado"])
+        self.assertEqual(config["wms"]["width"], self.clip[2])  # type: ignore[index]
+        self.assertEqual(config["wms"]["height"], self.clip[3])  # type: ignore[index]
+
+    def test_location_ign_falls_back_to_existing_tms_when_wms_fails(self) -> None:
+        canvas = Image.new("RGBA", (4000, 3000))
+        config: dict[str, object] = {}
+        with patch("src.compositor_cartografico_pil.ign_wms_basemap_raster", return_value=False), patch(
+            "src.compositor_cartografico_pil.basemap_raster", return_value=True
+        ) as tms:
+            ok = compositor.render_report_basemap(self.bounds, canvas, self.clip, config, location=True, mapa_base="ign_gris")
+        self.assertTrue(ok)
         tms.assert_called_once()
-        self.assertEqual(config["metodo"], "tms")
-        self.assertNotIn("wms", config)
+        self.assertEqual(config["metodo"], "tms_fallback")
+        self.assertTrue(config["fallback_tms_usado"])
 
 
 if __name__ == "__main__":

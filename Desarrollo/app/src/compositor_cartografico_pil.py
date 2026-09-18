@@ -619,7 +619,7 @@ def render_report_basemap(
     zoom_offset = LOCATION_TILE_ZOOM_OFFSET if location else 0
     method = "tms"
     fallback_used = False
-    if provider_key == MAP_BASE_IGN_GRIS and not location:
+    if provider_key == MAP_BASE_IGN_GRIS:
         method = "wms"
         ok = ign_wms_basemap_raster(bounds, canvas, clip, brightness, saturation, gamma)
         if not ok:
@@ -636,7 +636,7 @@ def render_report_basemap(
         config["zoom_offset"] = zoom_offset
         config["metodo"] = method
         config["fallback_tms_usado"] = fallback_used
-        if provider_key == MAP_BASE_IGN_GRIS and not location:
+        if provider_key == MAP_BASE_IGN_GRIS:
             config["wms"] = {
                 "url": IGN_WMS_URL,
                 "capa": IGN_WMS_LAYER,
