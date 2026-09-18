@@ -37,25 +37,17 @@ mdt:
   timeout_s: 45
   resoluciones_preferidas_m: [5, 25]
   max_pixeles: 4000000
-  user_agent: "Analisis-Orografico/3.1.0"
 
 mapas:
-  dpi: 600
-  ancho_cm: 17.0
-  alto_cm: 12.0
   margen_m_auto: 0.15
   margen_m_min: 250
   base: "ign_gris"
-  pk_intervalos_km: [1, 5, 10, 25, 50, 100]
 
 perfil:
   intervalo_muestreo_auto_m: 75
-  intervalo_muestreo_min_ui_m: 20
-  intervalo_muestreo_max_ui_m: 250
   suavizado_default: 4
 
 pendientes:
-  longitud_segmento_auto_m: 250
   clases_base:
     - [-999, -8]
     - [-8, -6]

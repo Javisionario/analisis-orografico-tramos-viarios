@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from src import APP_VERSION
 from src.exportacion import generar_outputs
 from src.credenciales import eliminar_api_key_carto, guardar_api_key_carto, obtener_api_key_carto
 from src.io_datos import diagnostico_capas, list_road_options, load_lineas, resolve_road_name
@@ -24,8 +25,7 @@ from src.utils import load_config, resolve_tool_path
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "v3.1.1"
-app = FastAPI(title="Herramienta tramos y pendientes", version="3.1.1")
+app = FastAPI(title="Herramienta tramos y pendientes", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 # El compositor mantiene diagnósticos por generación; serializar jobs evita cruzarlos.
@@ -93,7 +93,7 @@ class GenerarRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "index.html", {"version": APP_VERSION})
+    return templates.TemplateResponse(request, "index.html", {"version": f"v{APP_VERSION}"})
 
 
 @app.get("/api/diagnostico")
@@ -273,11 +273,21 @@ def progreso(job_id: str) -> dict[str, Any]:
 def download(job_id: str, filename: str) -> FileResponse:
     outputs_root = resolve_tool_path(load_config().get("paths", {}).get("outputs", "outputs")).resolve()
     target = (outputs_root / job_id / filename).resolve()
-    if not str(target).startswith(str(outputs_root)) or not target.exists() or not target.is_file():
+    if not _is_within_outputs_root(target, outputs_root):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado") from None
+    if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     return FileResponse(target, filename=target.name)
 
 
+def _is_within_outputs_root(target: Path, outputs_root: Path) -> bool:
+    try:
+        target.relative_to(outputs_root)
+    except ValueError:
+        return False
+    return True
+
+
 if __name__ == "__main__":
     cfg = load_config().get("app", {})
-    uvicorn.run("app:app", host=str(cfg.get("host", "127.0.0.1")), port=int(cfg.get("port", 8024)), reload=False)
+    uvicorn.run("app:app", host=str(cfg.get("host", "127.0.0.1")), port=int(cfg.get("port", 8025)), reload=False)

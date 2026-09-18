@@ -16,4 +16,5 @@ dist/
 *.egg-info/
 Resultados/*
 !Resultados/.gitkeep
+.codex.zip
 Desarrollo/data/**/*.gpkg

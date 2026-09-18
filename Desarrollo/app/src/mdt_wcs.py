@@ -14,6 +14,7 @@ from owslib.wcs import WebCoverageService
 from rasterio.merge import merge
 
 from .utils import ensure_dir, resolve_tool_path
+from . import USER_AGENT
 
 
 WCS_VERSION = "1.0.0"
@@ -387,7 +388,7 @@ def obtener_mdt(
     timeout = int(mdt_cfg.get("timeout_s", 45))
     max_pixels = max(1, int(mdt_cfg.get("max_pixeles", 4_000_000)))
     attempts = _resolution_attempts(bbox, resolutions, max_pixels)
-    headers = {"User-Agent": str(mdt_cfg.get("user_agent", "Analisis-Orografico/3.1.0"))}
+    headers = {"User-Agent": USER_AGENT}
     base_meta: dict[str, Any] = {
         "wcs_url": url,
         "wcs_version": WCS_VERSION,

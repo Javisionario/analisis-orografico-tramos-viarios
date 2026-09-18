@@ -1,6 +1,6 @@
 # Parametros tecnicos
 
-Fecha de revision: 2026-07-05
+Fecha de revision: 2026-09-18
 
 Este documento explica los parametros de la herramienta para un usuario tecnico no especialista. Los parametros se aplican a un unico tramo definido por carretera, sentido, PK inicio y PK fin.
 

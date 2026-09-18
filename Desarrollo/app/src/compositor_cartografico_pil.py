@@ -12,6 +12,8 @@ from typing import Any, Callable, Iterable
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
+from . import USER_AGENT
+
 
 DEVELOPMENT_ROOT = Path(__file__).resolve().parents[2]
 TILE_CACHE = DEVELOPMENT_ROOT / "cache" / "tiles_cartografia"
@@ -350,7 +352,7 @@ def ign_wms_bytes(bounds: tuple[float, float, float, float], width: int, height:
         remember_tile_error(error, str(cache))
     url = ign_wms_request_url(bounds, width, height)
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Analisis-Orografico/3.1.0"})
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(request, timeout=TILE_TIMEOUT_SECONDS) as response:
             data = response.read()
         if not valid_wms_image(data, width, height):
@@ -388,7 +390,7 @@ def tile_bytes(
     failures: list[tuple[str, Exception]] = []
     for url, cache in candidates:
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Analisis-Orografico/3.1.1"})
+            request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(request, timeout=TILE_TIMEOUT_SECONDS) as response:
                 data = response.read()
             if not valid_tile_bytes(data):
