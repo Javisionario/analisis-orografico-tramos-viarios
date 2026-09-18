@@ -108,15 +108,18 @@ class TestIntervalos(unittest.TestCase):
                 "cota_suavizada_m": [100, 100, 100],
                 "pendiente_bruta_pct": [18, 18, 18],
                 "pendiente_suavizada_pct": [12, 12, 12],
-                "pendiente_representada_pct": [10, 10, 10],
+                "pendiente_representada_pct": [0, 0, 0],
                 "pendiente_anomala": [True, True, True],
             }
         )
         config = load_config()
         segmentos, meta = segmentar_pendientes(tramo, perfil, 500, config, 10)
-        self.assertAlmostEqual(float(segmentos.iloc[0]["pendiente_pct"]), 10.0, places=3)
+        self.assertAlmostEqual(float(segmentos.iloc[0]["pendiente_pct"]), 0.0, places=3)
         self.assertAlmostEqual(float(segmentos.iloc[0]["pendiente_cota_segmento_pct"]), 0.0, places=3)
+        self.assertEqual(perfil["pendiente_bruta_pct"].to_list(), [18, 18, 18])
+        self.assertEqual(perfil["pendiente_suavizada_pct"].to_list(), [12, 12, 12])
         self.assertTrue(bool(segmentos.iloc[0]["pendiente_anomala"]))
+        self.assertEqual(segmentos.iloc[0]["color"], "#ffff00")
         self.assertTrue(meta["pendiente_mapa_usa_suavizado_pendientes"])
         self.assertTrue(meta["pendiente_mapa_usa_aplanamiento"])
 

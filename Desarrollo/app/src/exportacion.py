@@ -14,7 +14,7 @@ from .io_datos import load_admin, load_lineas, load_lineas_bbox, load_pks, resol
 from .mapas import bounds_mapa_principal_lonlat, generar_mapa_localizacion, generar_mapa_pendientes
 from .mdt_wcs import obtener_mdt
 from .pendientes import exportar_segmentos, segmentar_pendientes
-from .perfiles import exportar_perfil, generar_perfil
+from .perfiles import calcular_halo_perfil, exportar_perfil, generar_perfil
 from .tramo import TramoError, ajustar_pk_a_rango, extraer_tramo, rango_disponible_sentido
 from .utils import ensure_dir, format_pk, json_dump, load_config, method_notes, now_slug, parse_interval, resolve_tool_path, slugify
 
@@ -50,6 +50,36 @@ def _expanded_bbox(geometry: Any, margin_ratio: float = 0.15, min_margin: float 
     size = max(xmax - xmin, ymax - ymin, 1.0)
     margin = max(size * margin_ratio, min_margin)
     return xmin - margin, ymin - margin, xmax + margin, ymax + margin
+
+
+def _union_bbox(*bboxes: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    return (
+        min(bbox[0] for bbox in bboxes),
+        min(bbox[1] for bbox in bboxes),
+        max(bbox[2] for bbox in bboxes),
+        max(bbox[3] for bbox in bboxes),
+    )
+
+
+def _tramo_calculo_perfil(
+    tramo: Any,
+    lineas: gpd.GeoDataFrame,
+    cols_lineas: dict[str, str | None],
+    pks: Any,
+    pk_cols: dict[str, str | None],
+    rango_min: float,
+    rango_max: float,
+    halo_m: float,
+) -> Any:
+    """Extrae únicamente el contexto disponible para el cálculo interno."""
+    halo_km = max(0.0, float(halo_m)) / 1000.0
+    if tramo.sentido == "decreciente":
+        pk_inicio = min(float(rango_max), float(tramo.pk_inicio_recorrido) + halo_km)
+        pk_fin = max(float(rango_min), float(tramo.pk_fin_recorrido) - halo_km)
+    else:
+        pk_inicio = max(float(rango_min), float(tramo.pk_inicio_recorrido) - halo_km)
+        pk_fin = min(float(rango_max), float(tramo.pk_fin_recorrido) + halo_km)
+    return extraer_tramo(lineas, cols_lineas, tramo.carretera, pk_inicio, pk_fin, tramo.sentido, pks, pk_cols)
 
 
 def _job_dir(params: dict[str, Any], config: dict[str, Any]) -> Path:
@@ -288,6 +318,8 @@ def _run_scope(
             int(params.get("sg_pendientes_window_puntos")) if params.get("sg_pendientes_window_puntos") not in (None, "") else None,
             int(params.get("sg_pendientes_polyorder")) if params.get("sg_pendientes_polyorder") not in (None, "") else None,
             int(params.get("sg_pendientes_polyorder_slider_visual")) if params.get("sg_pendientes_polyorder_slider_visual") not in (None, "") else None,
+            tramo_calculo=params.get("_tramo_calculo_perfil"),
+            halo_puntos=params.get("_halo_perfil_puntos"),
         )
         perfil_meta["mostrar_linea_muestreada_elevaciones"] = _bool(params.get("mostrar_linea_muestreada_elevaciones"), False)
         warnings.extend(perfil_warnings)
@@ -534,6 +566,36 @@ def generar_outputs(params: dict[str, Any], progress: Any = None) -> dict[str, A
                 tramo = extraer_tramo(lineas, cols_lineas, carretera, pk_inicio_ajustado, pk_fin_ajustado, sentido_item, pks, pk_cols)
                 warnings.extend(tramo.advertencias)
                 _mark(timings, f"extraccion_tramo_{sentido_item}", stage)
+                intervalo_perfil = _float_or_none(params.get("intervalo_muestreo_m"))
+                if intervalo_perfil is None:
+                    intervalo_perfil = float(config.get("perfil", {}).get("intervalo_muestreo_auto_m", 75))
+                suavizado_elevaciones_value = params.get("suavizado_elevaciones")
+                if suavizado_elevaciones_value in (None, ""):
+                    suavizado_elevaciones_value = params.get("suavizado", config.get("perfil", {}).get("suavizado_default", 4))
+                elev_mode = str(params.get("suavizado_elevaciones_modo") or params.get("suavizado_modo") or "simple")
+                slope_mode = str(params.get("suavizado_pendientes_modo", "simple"))
+                elev_window = params.get("sg_elevaciones_window_puntos", params.get("sg_window_puntos"))
+                elev_polyorder = params.get("sg_elevaciones_polyorder", params.get("sg_polyorder"))
+                slope_window = params.get("sg_pendientes_window_puntos")
+                slope_polyorder = params.get("sg_pendientes_polyorder")
+                # Antes de conocer la resolución final del WCS se reserva el caso
+                # más espaciado soportado (25 m), para que el MDT cubra el halo real.
+                intervalo_reserva_mdt = max(float(intervalo_perfil), 25.0)
+                halo_reserva = calcular_halo_perfil(
+                    tramo.longitud_m,
+                    intervalo_reserva_mdt,
+                    float(suavizado_elevaciones_value),
+                    elev_mode,
+                    int(elev_window) if elev_window not in (None, "") else None,
+                    int(elev_polyorder) if elev_polyorder not in (None, "") else None,
+                    float(params.get("suavizado_pendientes", 4)),
+                    slope_mode,
+                    int(slope_window) if slope_window not in (None, "") else None,
+                    int(slope_polyorder) if slope_polyorder not in (None, "") else None,
+                )
+                tramo_reserva_mdt = _tramo_calculo_perfil(
+                    tramo, lineas, cols_lineas, pks, pk_cols, rango_min, rango_max, float(halo_reserva["halo_m"])
+                )
                 bbox = _expanded_bbox(
                     tramo.geometry,
                     float(config.get("mapas", {}).get("margen_m_auto", 0.15)),
@@ -556,6 +618,7 @@ def generar_outputs(params: dict[str, Any], progress: Any = None) -> dict[str, A
                         mdt_bbox = tuple(float(v) for v in transform_bounds("EPSG:4326", f"EPSG:{epsg}", *map_bounds_lonlat, densify_pts=21))
                     except Exception as exc:
                         warnings.append(f"No se pudo calcular bbox MDT del encuadre final del mapa; se usa bbox del tramo: {exc}")
+                mdt_bbox = _union_bbox(mdt_bbox, tuple(float(value) for value in tramo_reserva_mdt.geometry.bounds))
                 if needs_mdt:
                     _progress(progress, 3, "Cargando modelo digital del terreno.", sentido_item)
                     stage = perf_counter()
@@ -568,7 +631,7 @@ def generar_outputs(params: dict[str, Any], progress: Any = None) -> dict[str, A
                         "source": mdt.source,
                         "path": str(mdt.path) if mdt.path else None,
                         "bbox": mdt_bbox,
-                        "bbox_origen": "map_main" if (generar_localizacion or generar_pendientes) else "tramo",
+                        "bbox_origen": "map_main_y_contexto_perfil" if (generar_localizacion or generar_pendientes) else "tramo_y_contexto_perfil",
                         **mdt.metadata,
                     }
                     metadata["mdt_por_sentido"][sentido_item] = mdt_meta
@@ -581,7 +644,25 @@ def generar_outputs(params: dict[str, Any], progress: Any = None) -> dict[str, A
                     metadata["mdt"] = mdt_meta
                     mdt_path = None
                     mdt_resolution = None
+                intervalo_efectivo = max(float(intervalo_perfil), float(mdt_resolution or 0.0))
+                halo_perfil = calcular_halo_perfil(
+                    tramo.longitud_m,
+                    intervalo_efectivo,
+                    float(suavizado_elevaciones_value),
+                    elev_mode,
+                    int(elev_window) if elev_window not in (None, "") else None,
+                    int(elev_polyorder) if elev_polyorder not in (None, "") else None,
+                    float(params.get("suavizado_pendientes", 4)),
+                    slope_mode,
+                    int(slope_window) if slope_window not in (None, "") else None,
+                    int(slope_polyorder) if slope_polyorder not in (None, "") else None,
+                )
+                tramo_calculo_perfil = _tramo_calculo_perfil(
+                    tramo, lineas, cols_lineas, pks, pk_cols, rango_min, rango_max, float(halo_perfil["halo_m"])
+                )
                 params_scope["_mdt_meta"] = mdt_meta
+                params_scope["_tramo_calculo_perfil"] = tramo_calculo_perfil
+                params_scope["_halo_perfil_puntos"] = int(halo_perfil["halo_puntos"])
                 scope_files, scope_meta, scope_warnings = _run_scope(
                     f"TOTAL_{sentido_item}" if sentido_solicitado == "ambos" else "TOTAL",
                     tramo,

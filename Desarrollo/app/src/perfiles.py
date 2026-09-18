@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from matplotlib.lines import Line2D
-from matplotlib.ticker import AutoMinorLocator, FuncFormatter, MaxNLocator
+from matplotlib.ticker import AutoMinorLocator, FixedLocator, FuncFormatter, MaxNLocator
 from rasterio.crs import CRS
 from rasterio.warp import transform as transform_coords
 from scipy.signal import savgol_filter
@@ -255,6 +255,116 @@ def _sampling_meta(intervalo_m: float, pixel_m: float | None) -> tuple[float, di
     return intervalo, meta, warnings
 
 
+def _profile_distances(longitud_m: float, intervalo_m: float) -> np.ndarray:
+    """Malla visible del perfil, anclada siempre en el inicio solicitado."""
+    distances = np.arange(0.0, float(longitud_m) + float(intervalo_m), float(intervalo_m))
+    if distances[-1] > float(longitud_m):
+        distances[-1] = float(longitud_m)
+    return np.unique(distances)
+
+
+def calcular_halo_perfil(
+    longitud_m: float,
+    intervalo_m: float,
+    suavizado_elevaciones: float,
+    suavizado_elevaciones_modo: str = "simple",
+    sg_elevaciones_window_puntos: int | None = None,
+    sg_elevaciones_polyorder: int | None = None,
+    suavizado_pendientes: float = 4.0,
+    suavizado_pendientes_modo: str = "simple",
+    sg_pendientes_window_puntos: int | None = None,
+    sg_pendientes_polyorder: int | None = None,
+) -> dict[str, int | float]:
+    """Calcula el halo SG con las ventanas que terminarán aplicándose.
+
+    Se resuelve por punto fijo porque, en tramos cortos, el propio halo puede
+    permitir una ventana SG mayor que la disponible en el tramo visible.
+    """
+    visible_n = len(_profile_distances(longitud_m, intervalo_m))
+    halo = 0
+    elev_window = 0
+    slope_window = 0
+    for _ in range(8):
+        calculation_n = max(1, visible_n + 2 * halo)
+        probe = np.zeros(calculation_n, dtype=float)
+        _elev, elev_meta, _warnings = _smooth(
+            probe,
+            suavizado_elevaciones,
+            intervalo_m,
+            max(float(intervalo_m), (calculation_n - 1) * float(intervalo_m)),
+            suavizado_elevaciones_modo,
+            sg_elevaciones_window_puntos,
+            sg_elevaciones_polyorder,
+        )
+        _slope, slope_meta, _warnings = _smooth(
+            probe,
+            suavizado_pendientes,
+            intervalo_m,
+            max(float(intervalo_m), (calculation_n - 1) * float(intervalo_m)),
+            suavizado_pendientes_modo,
+            sg_pendientes_window_puntos,
+            sg_pendientes_polyorder,
+        )
+        elev_window = int(elev_meta.get("sg_window_puntos_aplicada", 0) or 0)
+        slope_window = int(slope_meta.get("sg_window_puntos_aplicada", 0) or 0)
+        updated_halo = max(0, (elev_window - 1) // 2) + max(0, (slope_window - 1) // 2) + 1
+        if updated_halo == halo:
+            break
+        halo = updated_halo
+    return {
+        "halo_puntos": int(halo),
+        "halo_m": float(halo * float(intervalo_m)),
+        "half_window_elevaciones": int(max(0, (elev_window - 1) // 2)),
+        "half_window_pendientes": int(max(0, (slope_window - 1) // 2)),
+    }
+
+
+def _calculation_mesh(
+    tramo: TramoExtraido,
+    tramo_calculo: TramoExtraido | None,
+    distances: np.ndarray,
+    intervalo_m: float,
+    halo_puntos: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """Añade contexto sin modificar ningún punto de la malla visible."""
+    visible_points = [tramo.geometry.interpolate(float(distance)) for distance in distances]
+    if tramo_calculo is None or halo_puntos <= 0:
+        xs = np.array([point.x for point in visible_points], dtype=float)
+        ys = np.array([point.y for point in visible_points], dtype=float)
+        return distances, xs, ys, 0, 0
+
+    start_offset = float(tramo_calculo.geometry.project(tramo.geometry.interpolate(0.0)))
+    end_offset = float(tramo_calculo.geometry.project(tramo.geometry.interpolate(float(tramo.longitud_m))))
+    if end_offset < start_offset:
+        return distances, np.array([p.x for p in visible_points]), np.array([p.y for p in visible_points]), 0, 0
+
+    eps = 1e-7
+    pre_count = min(int(halo_puntos), max(0, int(np.floor((start_offset + eps) / intervalo_m))))
+    next_grid = float(np.ceil(float(tramo.longitud_m) / intervalo_m) * intervalo_m)
+    if next_grid <= float(tramo.longitud_m) + eps:
+        next_grid += intervalo_m
+    first_forward_offset = next_grid - float(tramo.longitud_m)
+    available_forward = float(tramo_calculo.longitud_m) - end_offset
+    post_count = 0
+    if available_forward + eps >= first_forward_offset:
+        post_count = min(int(halo_puntos), int(np.floor((available_forward - first_forward_offset + eps) / intervalo_m)) + 1)
+
+    pre_distances = -np.arange(pre_count, 0, -1, dtype=float) * intervalo_m
+    post_distances = next_grid + np.arange(post_count, dtype=float) * intervalo_m
+    pre_points = [tramo_calculo.geometry.interpolate(start_offset + float(value)) for value in pre_distances]
+    post_points = [
+        tramo_calculo.geometry.interpolate(end_offset + float(value - tramo.longitud_m)) for value in post_distances
+    ]
+    all_points = pre_points + visible_points + post_points
+    return (
+        np.concatenate((pre_distances, distances, post_distances)),
+        np.array([point.x for point in all_points], dtype=float),
+        np.array([point.y for point in all_points], dtype=float),
+        pre_count,
+        post_count,
+    )
+
+
 def _nice_pk_ticks(start: float, end: float, target: int = 6) -> list[float]:
     lo, hi = min(float(start), float(end)), max(float(start), float(end))
     span = hi - lo
@@ -293,7 +403,7 @@ def _apply_slope_anomaly_threshold(slope_smoothed: np.ndarray, threshold_pct: fl
     smoothed = slope_smoothed.astype(float).copy()
     anomalies = np.isfinite(smoothed) & (np.abs(smoothed) > threshold)
     represented = smoothed.copy()
-    represented[anomalies] = np.sign(smoothed[anomalies]) * threshold
+    represented[anomalies] = 0.0
     return represented, anomalies
 
 
@@ -364,6 +474,24 @@ def _elevation_axis(values: np.ndarray, mode: str) -> dict[str, float | int | st
     return _nice_y_axis(values, mode, max_ticks=7)
 
 
+def _slope_axis(values: np.ndarray) -> dict[str, Any] | None:
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return None
+    max_abs = float(np.max(np.abs(finite)))
+    if max_abs <= 2.25:
+        return {"low": -2.5, "high": 2.5, "ticks": (-2.0, -1.0, 0.0, 1.0, 2.0)}
+    if max_abs <= 4.5:
+        return {"low": -5.0, "high": 5.0, "ticks": (-4.0, -2.0, 0.0, 2.0, 4.0)}
+    low = min(float(np.min(finite)), 0.0)
+    high = max(float(np.max(finite)), 0.0)
+    if abs(high - low) < 1e-6:
+        low -= 1.0
+        high += 1.0
+    margin = max(0.8, (high - low) * 0.18)
+    return {"low": low - margin, "high": high + margin, "ticks": None}
+
+
 def _profile_summary(df: pd.DataFrame, y_axis: dict[str, Any], threshold_pct: float) -> dict[str, Any]:
     z = df["cota_suavizada_m"].to_numpy(dtype=float)
     pk = df["pk"].to_numpy(dtype=float)
@@ -417,7 +545,7 @@ def _profile_summary(df: pd.DataFrame, y_axis: dict[str, Any], threshold_pct: fl
         "anomalias": {
             "umbral_pendiente_anomala_pct": float(threshold_pct),
             "n_lecturas_anomalas": int(np.count_nonzero(anomalies)),
-            "criterio_aplanado": "abs(pendiente_suavizada_pct) > umbral; pendiente_representada_pct = signo * umbral",
+            "criterio_aplanado": "abs(pendiente_suavizada_pct) > umbral; pendiente_representada_pct = 0 %",
             "suavizado_bordes_visual": "El amarillo solo marca tramos con ambos extremos anomalos; los segmentos de transicion conservan el color de pendiente representada.",
         },
     }
@@ -442,21 +570,73 @@ def generar_perfil(
     sg_pendientes_window_puntos: int | None = None,
     sg_pendientes_polyorder: int | None = None,
     sg_pendientes_polyorder_slider_visual: int | None = None,
+    tramo_calculo: TramoExtraido | None = None,
+    halo_puntos: int | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], list[str]]:
     warnings: list[str] = []
     intervalo_base = 75.0 if intervalo_m is None else float(intervalo_m)
     intervalo_m, sampling_meta, sampling_warnings = _sampling_meta(intervalo_base, resolucion_mdt_m)
     warnings.extend(sampling_warnings)
 
-    distances = np.arange(0.0, tramo.longitud_m + intervalo_m, intervalo_m)
-    if distances[-1] > tramo.longitud_m:
-        distances[-1] = tramo.longitud_m
-    distances = np.unique(distances)
-    points = [tramo.geometry.interpolate(float(distance)) for distance in distances]
-    xs = np.array([point.x for point in points], dtype=float)
-    ys = np.array([point.y for point in points], dtype=float)
-    fraction = np.divide(distances, max(tramo.longitud_m, 1e-9))
-    pk_values = tramo.pk_inicio_recorrido + (tramo.pk_fin_recorrido - tramo.pk_inicio_recorrido) * fraction
+    visible_distances = _profile_distances(tramo.longitud_m, intervalo_m)
+    halo = calcular_halo_perfil(
+        tramo.longitud_m,
+        intervalo_m,
+        smoothing,
+        suavizado_modo,
+        sg_window_puntos,
+        sg_polyorder,
+        suavizado_pendientes,
+        suavizado_pendientes_modo,
+        sg_pendientes_window_puntos,
+        sg_pendientes_polyorder,
+    )
+    requested_halo = int(halo_puntos) if halo_puntos is not None else int(halo["halo_puntos"])
+    # En un extremo de carretera puede haber menos contexto que el reservado.
+    # Recalculamos el punto fijo con las muestras realmente disponibles antes de
+    # obtener cotas, de modo que la fórmula use las ventanas que se aplicarán.
+    for _ in range(8):
+        probe_distances, _probe_xs, _probe_ys, _pre, _post = _calculation_mesh(
+            tramo, tramo_calculo, visible_distances, intervalo_m, requested_halo
+        )
+        probe = np.zeros(len(probe_distances), dtype=float)
+        _values, probe_elev_meta, _warnings = _smooth(
+            probe,
+            smoothing,
+            intervalo_m,
+            max(tramo.longitud_m, float(probe_distances[-1] - probe_distances[0])),
+            suavizado_modo,
+            sg_window_puntos,
+            sg_polyorder,
+            sg_polyorder_slider_visual,
+        )
+        _values, probe_slope_meta, _warnings = _smooth(
+            probe,
+            suavizado_pendientes,
+            intervalo_m,
+            max(tramo.longitud_m, float(probe_distances[-1] - probe_distances[0])),
+            suavizado_pendientes_modo,
+            sg_pendientes_window_puntos,
+            sg_pendientes_polyorder,
+            sg_pendientes_polyorder_slider_visual,
+        )
+        effective_halo = (
+            max(0, (int(probe_elev_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2)
+            + max(0, (int(probe_slope_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2)
+            + 1
+        )
+        if effective_halo == requested_halo:
+            break
+        requested_halo = effective_halo
+    calculation_distances, xs, ys, pre_count, post_count = _calculation_mesh(
+        tramo,
+        tramo_calculo,
+        visible_distances,
+        intervalo_m,
+        requested_halo,
+    )
+    fraction = np.divide(calculation_distances, max(tramo.longitud_m, 1e-9))
+    pk_calculation = tramo.pk_inicio_recorrido + (tramo.pk_fin_recorrido - tramo.pk_inicio_recorrido) * fraction
 
     source = "mdt"
     raster_sampling_meta: dict[str, Any] = {
@@ -474,7 +654,7 @@ def generar_perfil(
         warnings.append("No hay MDT disponible; se intenta fallback con cotas de PK.")
     if np.all(~np.isfinite(raw_z)):
         source = "pk_coord_z"
-        raw_z, pk_warnings = _sample_pk_z(pks, pk_cols, pk_values)
+        raw_z, pk_warnings = _sample_pk_z(pks, pk_cols, pk_calculation)
         warnings.extend(pk_warnings)
     if np.all(~np.isfinite(raw_z)):
         source = "sin_cota_real"
@@ -486,22 +666,22 @@ def generar_perfil(
         raw_z,
         smoothing,
         intervalo_m,
-        tramo.longitud_m,
+        max(tramo.longitud_m, float(calculation_distances[-1] - calculation_distances[0])),
         suavizado_modo,
         sg_window_puntos,
         sg_polyorder,
         sg_polyorder_slider_visual,
     )
     warnings.extend(smooth_warnings)
-    if len(distances) > 1:
-        slope_raw = np.gradient(smooth_z, distances) * 100.0
+    if len(calculation_distances) > 1:
+        slope_raw = np.gradient(smooth_z, calculation_distances) * 100.0
     else:
-        slope_raw = np.zeros(len(distances), dtype=float)
+        slope_raw = np.zeros(len(calculation_distances), dtype=float)
     slope_smoothed, slope_smooth_meta, slope_smooth_warnings = _smooth(
         slope_raw,
         suavizado_pendientes,
         intervalo_m,
-        tramo.longitud_m,
+        max(tramo.longitud_m, float(calculation_distances[-1] - calculation_distances[0])),
         suavizado_pendientes_modo,
         sg_pendientes_window_puntos,
         sg_pendientes_polyorder,
@@ -510,27 +690,37 @@ def generar_perfil(
     warnings.extend(slope_smooth_warnings)
     slope_repr, slope_anomaly = _apply_slope_anomaly_threshold(slope_smoothed, umbral_pendiente_anomala_pct)
 
+    start = pre_count
+    end = pre_count + len(visible_distances)
+    output_slice = slice(start, end)
     df = pd.DataFrame(
         {
-            "pk": pk_values,
-            "distancia_m": distances,
-            "x": xs,
-            "y": ys,
-            "cota_bruta_m": raw_z,
-            "cota_suavizada_m": smooth_z,
-            "pendiente_bruta_pct": slope_raw,
-            "pendiente_suavizada_pct": slope_smoothed,
-            "pendiente_representada_pct": slope_repr,
-            "pendiente_perfil_pct": slope_repr,
-            "pendiente_anomala": slope_anomaly,
+            "pk": pk_calculation[output_slice],
+            "distancia_m": visible_distances,
+            "x": xs[output_slice],
+            "y": ys[output_slice],
+            "cota_bruta_m": raw_z[output_slice],
+            "cota_suavizada_m": smooth_z[output_slice],
+            "pendiente_bruta_pct": slope_raw[output_slice],
+            "pendiente_suavizada_pct": slope_smoothed[output_slice],
+            "pendiente_representada_pct": slope_repr[output_slice],
+            "pendiente_perfil_pct": slope_repr[output_slice],
+            "pendiente_anomala": slope_anomaly[output_slice],
             "umbral_pendiente_anomala_pct": float(umbral_pendiente_anomala_pct),
         }
     )
-    y_axis = _elevation_axis(smooth_z, modo_eje_y)
+    y_axis = _elevation_axis(df["cota_suavizada_m"].to_numpy(dtype=float), modo_eje_y)
     summary = _profile_summary(df, y_axis, float(umbral_pendiente_anomala_pct))
     meta = {
         "fuente_altimetrica": source,
-        "muestreo_altimetrico": sampling_meta,
+        "muestreo_altimetrico": {
+            **sampling_meta,
+            **{
+                **raster_sampling_meta,
+                "perfil_n_puntos_muestreo": int(len(visible_distances)),
+                "perfil_n_cotas_validas": int(np.count_nonzero(np.isfinite(raw_z[output_slice]))),
+            },
+        },
         "intervalo_muestreo_m": float(intervalo_m),
         "suavizado": elevation_smooth_meta,
         "suavizado_elevaciones": {
@@ -547,6 +737,22 @@ def generar_perfil(
         },
         "criterio_calculo_pendiente_bruta": "derivada numerica de cota_suavizada_m",
         "criterio_calculo_pendiente_suavizada": "Savitzky-Golay aplicado a pendiente_bruta_pct",
+        "contexto_calculo": {
+            "halo_puntos_formula": int(max(0, (int(elevation_smooth_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2))
+            + int(max(0, (int(slope_smooth_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2))
+            + 1,
+            "halo_m_formula": float(
+                (
+                    max(0, (int(elevation_smooth_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2)
+                    + max(0, (int(slope_smooth_meta.get("sg_window_puntos_aplicada", 0) or 0) - 1) // 2)
+                    + 1
+                )
+                * intervalo_m
+            ),
+            "muestras_contexto_inicio": int(pre_count),
+            "muestras_contexto_fin": int(post_count),
+            "muestras_calculo_total": int(len(calculation_distances)),
+        },
         **{key: value for key, value in summary.items() if key != "anomalias"},
         "anomalias": summary["anomalias"],
     }
@@ -614,12 +820,12 @@ def exportar_perfil(
 
     if mostrar_pendiente:
         ax2 = ax.twinx()
-        slope = df["pendiente_representada_pct"].to_numpy(dtype=float) if "pendiente_representada_pct" in df.columns else df["pendiente_perfil_pct"].to_numpy(dtype=float)
+        slope = df["pendiente_representada_pct"].to_numpy(dtype=float)
         anomalies = df["pendiente_anomala"].astype(bool).to_numpy() if "pendiente_anomala" in df.columns else np.zeros(len(df), dtype=bool)
         for idx in range(max(0, len(x) - 1)):
             if not np.all(np.isfinite([x[idx], x[idx + 1], slope[idx], slope[idx + 1]])):
                 continue
-            anomalous = bool(anomalies[idx] and anomalies[idx + 1])
+            anomalous = bool(anomalies[idx] or anomalies[idx + 1])
             color = PROFILE_ANOMALY_COLOR if anomalous else _slope_color(float(np.nanmean([slope[idx], slope[idx + 1]])))
             ax2.plot(
                 [x[idx], x[idx + 1]],
@@ -630,22 +836,18 @@ def exportar_perfil(
                 solid_capstyle="butt",
                 clip_on=True,
                 zorder=4,
-            )
+        )
         ax2.set_ylabel("")
         ax2.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: f"{value:.1f} %"))
-        finite = slope[np.isfinite(slope)]
-        if len(finite):
-            low = float(np.nanpercentile(finite, 5))
-            high = float(np.nanpercentile(finite, 95))
-            low = min(low, 0.0)
-            high = max(high, 0.0)
-            if abs(high - low) < 1e-6:
-                low -= 1.0
-                high += 1.0
-            margin = max(0.8, (high - low) * 0.18)
-            ax2.set_ylim(low - margin, high + margin)
+        slope_axis = _slope_axis(slope)
+        if slope_axis:
+            ax2.set_ylim(float(slope_axis["low"]), float(slope_axis["high"]))
         ax2.set_xlim(ax.get_xlim())
-        ax2.yaxis.set_major_locator(MaxNLocator(nbins=6))
+        if slope_axis and slope_axis["ticks"] is not None:
+            ax2.yaxis.set_major_locator(FixedLocator(slope_axis["ticks"]))
+        else:
+            ax2.yaxis.set_major_locator(MaxNLocator(nbins=6))
+        ax2.grid(False)
 
     legend_items = [Line2D([0], [0], color="#255f3c", linewidth=2.2, label="Elevaciones (m)")]
     if mostrar_pendiente:
