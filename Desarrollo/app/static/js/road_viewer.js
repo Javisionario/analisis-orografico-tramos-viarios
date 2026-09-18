@@ -3,7 +3,7 @@
   "use strict";
 
   const ROAD_LAYER_MIN_ZOOM = 10;
-  const SNAP_TOLERANCE_PX = 20;
+  const SNAP_TOLERANCE_PX = 40;
   const MAX_SNAP_TOLERANCE_M = 500;
   const INTERACTION_STYLES = {
     locate: { color: "#2878b8", fillColor: "#ffffff" },

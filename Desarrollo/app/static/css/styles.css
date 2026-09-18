@@ -141,7 +141,7 @@ body {
 
 .help-overlay {
   position: fixed;
-  z-index: 100;
+  z-index: 3000;
   inset: 0;
   display: flex;
   justify-content: flex-end;
