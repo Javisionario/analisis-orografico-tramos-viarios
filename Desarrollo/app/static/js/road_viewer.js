@@ -12,12 +12,13 @@
   };
   const NETWORK_STYLES = {
     conventional: {
-      casing: { color: "#47515c", weight: 4, opacity: 0.3 },
-      interior: { color: "#ffffff", weight: 1.6, opacity: 0.58 },
+      casing: { color: "#4b535b", weight: 3.6, opacity: 0.28 },
+      interior: { color: "#f4e7a1", weight: 1.5, opacity: 0.62 },
     },
     autovia: {
-      casing: { color: "#34495e", weight: 5.2, opacity: 0.37 },
-      interior: { color: "#3f8fc4", weight: 2.6, opacity: 0.64 },
+      casing: { color: "#29475e", weight: 6.2, opacity: 0.72 },
+      interior: { color: "#438fc2", weight: 4.2, opacity: 0.78 },
+      center: { color: "#ffffff", weight: 1, opacity: 0.78 },
     },
   };
   const mapElement = document.querySelector("#roadViewerMap");
@@ -182,7 +183,7 @@
 
   function drawPoint(point, label, tool) {
     const style = INTERACTION_STYLES[tool];
-    L.circleMarker([point.lat, point.lon], { radius: 7, color: style.color, weight: 2, fillColor: style.fillColor, fillOpacity: 1 })
+    L.circleMarker([point.lat, point.lon], { pane: "roadInteractionPane", radius: 7, color: style.color, weight: 2, fillColor: style.fillColor, fillOpacity: 1 })
       .bindTooltip(label, { permanent: true, direction: "top", offset: [0, -11], className: `viewer-marker-tooltip ${tool}` })
       .addTo(measureLayer);
   }
@@ -223,7 +224,7 @@
       measureLayer.clearLayers();
       drawPoint(data.p1, `${data.carretera} · PK ${pkText(data.pk1)}`, "measure");
       drawPoint(data.p2, `${data.carretera} · PK ${pkText(data.pk2)}`, "measure");
-      L.geoJSON(data.geometry, { style: { color: INTERACTION_STYLES.measure.color, weight: 5, opacity: 0.82 } }).addTo(measureLayer);
+      L.geoJSON(data.geometry, { pane: "roadInteractionPane", style: { color: INTERACTION_STYLES.measure.color, weight: 5, opacity: 0.82 } }).addTo(measureLayer);
       const title = `${data.carretera} · PK ${pkText(data.pk1)} → PK ${pkText(data.pk2)}`;
       const value = `Longitud sobre la vía: ${(data.distancia_geometria_m / 1000).toFixed(2)} km · Diferencia entre PK: ${(data.diferencia_pk_m / 1000).toFixed(2)} km`;
       setResult(`<div class="viewer-card"><div class="viewer-card-row"><strong>${escapeHtml(title)}</strong><button type="button" class="viewer-copy" aria-label="Copiar medición" data-copy="${escapeHtml(title)}">copiar</button></div><p>${escapeHtml(value)}</p><div class="viewer-actions"><button type="button" class="ghost" data-use-tramo data-road="${escapeHtml(data.carretera)}" data-pk1="${data.pk1}" data-pk2="${data.pk2}">Usar este tramo</button><button type="button" class="ghost" data-clear-interaction>Borrar medición</button></div></div>`);
@@ -281,9 +282,10 @@
       if (!response.ok) throw new Error(data.detail || "No se pudo cargar la red.");
       if (requestId !== roadsRequestId) return;
       roadsLayer.clearLayers();
-      const roadStyle = (pass) => (feature) => ({ ...(feature.properties.autovia ? NETWORK_STYLES.autovia : NETWORK_STYLES.conventional)[pass], lineCap: "round", lineJoin: "round" });
+      const roadStyle = (pass) => (feature) => ({ ...((feature.properties?.autovia ? NETWORK_STYLES.autovia : NETWORK_STYLES.conventional)[pass]), pane: "roadNetworkPane", lineCap: "round", lineJoin: "round" });
       L.geoJSON(data, { style: roadStyle("casing") }).addTo(roadsLayer);
       L.geoJSON(data, { style: roadStyle("interior") }).addTo(roadsLayer);
+      L.geoJSON(data, { filter: (feature) => Boolean(feature.properties?.autovia), style: roadStyle("center") }).addTo(roadsLayer);
       setNetworkStatus(data.features?.length ? "" : "No hay vías calibradas visibles en este ámbito.");
     } catch (error) {
       if (error.name === "AbortError" || requestId !== roadsRequestId) return;
@@ -335,6 +337,8 @@
     const photo = L.tileLayer("https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg", { maxZoom: 19, attribution: "PNOA Máxima Actualidad · Instituto Geográfico Nacional." });
     grey.addTo(map);
     map.setView([40.2, -3.7], 6);
+    map.createPane("roadNetworkPane").style.zIndex = 410;
+    map.createPane("roadInteractionPane").style.zIndex = 460;
     roadsLayer = L.layerGroup().addTo(map);
     measureLayer = L.layerGroup().addTo(map);
     L.control.layers({ "Callejero gris": grey, Ortofoto: photo }, { "Red calibrada": roadsLayer }, { collapsed: true }).addTo(map);
