@@ -10,7 +10,7 @@ from shapely.geometry import LineString, Point
 ROOT = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(ROOT))
 
-from src.visor_red import localizar_pk, medir, punto_a_pk  # noqa: E402
+from src.visor_red import bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk  # noqa: E402
 
 
 COLS = {
@@ -99,6 +99,13 @@ class VisorRedTests(unittest.TestCase):
             script.index('resultsButton.addEventListener("click"'),
             script.index("if (!window.L || !mapElement)"),
         )
+
+    def test_bbox_wgs84_is_transformed_to_layer_crs(self) -> None:
+        west, south, east, north = bbox_wgs84_a_crs((-3.70, 40.40, -3.60, 40.50), "EPSG:25830")
+        self.assertLess(west, east)
+        self.assertLess(south, north)
+        self.assertGreater(west, 400000)
+        self.assertLess(east, 500000)
 
 
 if __name__ == "__main__":

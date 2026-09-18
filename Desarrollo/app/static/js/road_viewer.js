@@ -9,12 +9,17 @@
   const formElement = document.querySelector("#roadViewerForm");
   const resultElement = document.querySelector("#roadViewerResult");
   const resultsButton = document.querySelector("#viewerResultsButton");
+  const networkStatus = document.querySelector("#roadViewerNetworkStatus");
   let map = null;
   let roadsLayer = null;
   let measureLayer = null;
   let mode = null;
   let measurePoints = [];
   let loadTimer = null;
+  let roadsController = null;
+  let roadsRequestId = 0;
+  let resizeFrame = null;
+  let invalidBoundsRetries = 0;
   let hasResults = false;
 
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -31,10 +36,16 @@
     resultElement.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copy, button)));
     resultElement.querySelectorAll("[data-use-pk]").forEach((button) => button.addEventListener("click", () => usePk(button.dataset.usePk, button.dataset.usePkTarget)));
     resultElement.querySelectorAll("[data-zoom]").forEach((button) => button.addEventListener("click", () => {
-      map?.setView([Number(button.dataset.lat), Number(button.dataset.lon)], Math.max(map.getZoom(), 15));
+      focusMapPoint({ lat: Number(button.dataset.lat), lng: Number(button.dataset.lon) });
     }));
     resultElement.querySelectorAll("[data-measure-road]").forEach((button) => button.addEventListener("click", () => requestMeasure(button.dataset.measureRoad)));
     resultElement.querySelectorAll("[data-use-tramo]").forEach((button) => button.addEventListener("click", () => useTramo(button.dataset.road, button.dataset.pk1, button.dataset.pk2)));
+  }
+
+  function setNetworkStatus(message = "", isError = false) {
+    networkStatus.textContent = message;
+    networkStatus.hidden = !message;
+    networkStatus.classList.toggle("error", Boolean(message && isError));
   }
 
   function copyText(value, button) {
@@ -107,7 +118,7 @@
         if (!response.ok) throw new Error(item.detail || "No se pudo localizar el PK.");
         item.punto && drawPoint(item.punto, "PK");
         setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
-        map.setView([item.punto.lat, item.punto.lon], Math.max(map.getZoom(), 15));
+        focusMapPoint({ lat: item.punto.lat, lng: item.punto.lon });
       } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
     });
   }
@@ -189,17 +200,80 @@
   }
 
   async function loadRoads() {
-    if (!map || map.getZoom() < ROAD_LAYER_MIN_ZOOM) { roadsLayer.clearLayers(); return; }
+    if (!map || !roadsLayer) return;
+    const requestId = ++roadsRequestId;
+    roadsController?.abort();
+    if (map.getZoom() < ROAD_LAYER_MIN_ZOOM) {
+      roadsLayer.clearLayers();
+      setNetworkStatus("Acércate para mostrar la red calibrada.");
+      return;
+    }
     const bounds = map.getBounds();
-    const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(",");
+    if (!bounds.isValid()) {
+      setNetworkStatus("Ajustando vista del mapa…");
+      if (invalidBoundsRetries < 2) {
+        invalidBoundsRetries += 1;
+        invalidateMapSize();
+        setTimeout(loadRoads, 100);
+      }
+      return;
+    }
+    const bboxValues = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+    if (!bboxValues.every(Number.isFinite) || bboxValues[0] >= bboxValues[2] || bboxValues[1] >= bboxValues[3]) {
+      console.warn("BBOX Leaflet no válida; se omite la carga de red.", bboxValues);
+      setNetworkStatus("Ajustando vista del mapa…");
+      return;
+    }
+    const bbox = bboxValues.join(",");
+    invalidBoundsRetries = 0;
+    roadsController = new AbortController();
+    setNetworkStatus("Cargando red…");
     try {
-      const response = await fetch(`/api/visor/vias?${new URLSearchParams({ bbox })}`);
+      const response = await fetch(`/api/visor/vias?${new URLSearchParams({ bbox })}`, { signal: roadsController.signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "No se pudo cargar la red.");
+      if (requestId !== roadsRequestId) return;
       roadsLayer.clearLayers();
       L.geoJSON(data, { style: (feature) => feature.properties.autovia ? { color: "#2166a5", weight: 5, opacity: 0.62 } : { color: "#47515c", weight: 4.5, opacity: 0.5 }, onEachFeature: (_feature, layer) => layer.setStyle({ lineCap: "round", lineJoin: "round" }) }).addTo(roadsLayer);
       L.geoJSON(data, { style: (feature) => feature.properties.autovia ? { color: "#2f79b8", weight: 3, opacity: 0.72 } : { color: "#ffffff", weight: 2.1, opacity: 0.7 }, onEachFeature: (_feature, layer) => layer.setStyle({ lineCap: "round", lineJoin: "round" }) }).addTo(roadsLayer);
-    } catch (_error) { /* The base map and report generation stay usable. */ }
+      setNetworkStatus(data.features?.length ? "" : "No hay vías calibradas visibles en este ámbito.");
+    } catch (error) {
+      if (error.name === "AbortError" || requestId !== roadsRequestId) return;
+      console.warn("No se pudo cargar la red calibrada.", { bbox, error });
+      setNetworkStatus("No se pudo cargar la red calibrada.", true);
+    }
+  }
+
+  function invalidateMapSize() {
+    if (!map) return;
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => map?.invalidateSize({ pan: false }));
+  }
+
+  function focusMapPoint(point) {
+    if (!map) return;
+    map.invalidateSize({ pan: false });
+    map.setView([point.lat, point.lng], Math.max(Number(map.getZoom()) || 0, 15));
+    scheduleRoadLoad();
+  }
+
+  function validBounds(bounds) {
+    return Array.isArray(bounds) && bounds.length === 2
+      && bounds.every((item) => Array.isArray(item) && item.length === 2 && item.every(Number.isFinite))
+      && bounds[0][0] < bounds[1][0] && bounds[0][1] < bounds[1][1]
+      && bounds.flat().every((value, index) => index % 2 ? value >= -180 && value <= 180 : value >= -90 && value <= 90);
+  }
+
+  async function applyNetworkBounds() {
+    try {
+      const response = await fetch("/api/visor/bounds");
+      const data = await response.json();
+      if (!response.ok || !validBounds(data.bounds)) throw new Error(data.detail || "Bounds no válidos.");
+      invalidateMapSize();
+      requestAnimationFrame(() => map.fitBounds(data.bounds, { padding: [16, 16] }));
+    } catch (error) {
+      console.warn("No se pudieron aplicar los bounds de la red.", error);
+    }
   }
 
   async function initialise() {
@@ -212,26 +286,26 @@
     const grey = L.tileLayer("https://tms-ign-base.idee.es/1.0.0/IGNBaseGris/{z}/{x}/{y}.jpeg", { tms: true, maxNativeZoom: 17, maxZoom: 23, attribution: "Instituto Geográfico Nacional de España." });
     const photo = L.tileLayer("https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg", { maxZoom: 19, attribution: "PNOA Máxima Actualidad · Instituto Geográfico Nacional." });
     grey.addTo(map);
+    map.setView([40.2, -3.7], 6);
     roadsLayer = L.layerGroup().addTo(map);
     measureLayer = L.layerGroup().addTo(map);
     L.control.layers({ "Callejero gris": grey, Ortofoto: photo }, { "Red calibrada": roadsLayer }, { collapsed: true }).addTo(map);
     map.on("moveend", scheduleRoadLoad);
     map.on("click", onMapClick);
-    try {
-      const response = await fetch("/api/visor/bounds");
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail);
-      map.fitBounds(data.bounds, { padding: [16, 16] });
-    } catch (_error) { map.setView([40.2, -3.7], 6); }
     document.querySelectorAll("[data-viewer-tool]").forEach((button) => button.addEventListener("click", () => {
       if (button.dataset.viewerTool === "locate") showLocateForm();
       if (button.dataset.viewerTool === "identify") activateIdentify();
       if (button.dataset.viewerTool === "measure") activateMeasure();
     }));
+    setNetworkStatus("Acércate para mostrar la red calibrada.");
+    if (window.ResizeObserver) new ResizeObserver(invalidateMapSize).observe(mapElement);
+    else window.addEventListener("resize", invalidateMapSize);
+    invalidateMapSize();
+    applyNetworkBounds();
   }
 
   window.roadViewer = {
-    show() { requestAnimationFrame(() => map?.invalidateSize()); },
+    show() { requestAnimationFrame(() => requestAnimationFrame(invalidateMapSize)); },
     setHasResults(value) { hasResults = Boolean(value); resultsButton.hidden = !hasResults; },
   };
   initialise();

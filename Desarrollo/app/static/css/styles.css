@@ -1017,7 +1017,13 @@ select:disabled {
 
 .road-viewer {
   display: grid;
-  grid-template-rows: auto auto minmax(520px, calc(100vh - 195px)) auto;
+  grid-template-areas:
+    "toolbar"
+    "form"
+    "network"
+    "map"
+    "result";
+  grid-template-rows: auto auto auto minmax(520px, calc(100vh - 195px)) auto;
   gap: 10px;
 }
 
@@ -1039,11 +1045,17 @@ select:disabled {
 }
 
 .viewer-results-button { margin-left: auto; }
+.road-viewer-toolbar { grid-area: toolbar; }
+.road-viewer-form { grid-area: form; }
 .road-viewer-form:empty { display: none; }
+.road-viewer-network-status { margin: 0; color: var(--muted); font-size: 12px; }
+.road-viewer-network-status.error { color: var(--accent-dark); }
 .viewer-inline-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafb; }
 .viewer-inline-form label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .viewer-inline-form input { width: 150px; height: 34px; }
-.road-viewer-map { min-height: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
+.road-viewer-map { grid-area: map; min-height: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
+.road-viewer-network-status { grid-area: network; }
+.road-viewer-result { grid-area: result; }
 .viewer-identify-cursor { cursor: crosshair; }
 .viewer-measure-cursor { cursor: crosshair; }
 .road-viewer-result[hidden] { display: none; }
@@ -1082,7 +1094,7 @@ select:disabled {
     padding-left: 17px;
   }
 
-  .road-viewer { grid-template-rows: auto auto minmax(420px, 62vh) auto; }
+  .road-viewer { grid-template-rows: auto auto auto minmax(420px, 62vh) auto; }
   .viewer-results-button { margin-left: 0; }
   .viewer-inline-form input { width: min(100%, 180px); }
 }

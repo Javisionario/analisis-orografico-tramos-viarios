@@ -22,10 +22,11 @@ from src.credenciales import eliminar_api_key_carto, guardar_api_key_carto, obte
 from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, resolve_road_name, viario_path
 from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
-from src.visor_red import VisorRedError, agrupar_candidatos, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
+from src.visor_red import VisorRedError, agrupar_candidatos, bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
 
 import geopandas as gpd
 import pyogrio
+from pyproj import Transformer
 from shapely.geometry import Point
 
 
@@ -37,6 +38,7 @@ templates = Jinja2Templates(directory=ROOT / "templates")
 EXECUTOR = ThreadPoolExecutor(max_workers=1)
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = Lock()
+_VISOR_BOUNDS_CACHE: dict[tuple[str, str, int], tuple[float, float, float, float]] = {}
 
 PROGRESS_PHASES = [
     "Preparando el tramo de estudio.",
@@ -191,18 +193,43 @@ def rango_carretera(
 
 
 def _visor_bounds(config: dict[str, Any]) -> tuple[float, float, float, float]:
-    info = pyogrio.read_info(viario_path(config), layer=line_layer(config))
+    path = viario_path(config)
+    layer = line_layer(config)
+    info = pyogrio.read_info(path, layer=layer)
     bounds = info.get("total_bounds")
     crs = info.get("crs")
     if not bounds or not crs:
         raise VisorRedError("La capa calibrada no declara extensión o CRS.")
-    return tuple(map(float, gpd.GeoSeries.from_wkt([f"POLYGON (({bounds[0]} {bounds[1]}, {bounds[2]} {bounds[1]}, {bounds[2]} {bounds[3]}, {bounds[0]} {bounds[3]}, {bounds[0]} {bounds[1]}))"], crs=crs).to_crs(4326).total_bounds))
+    # The metadata extent is correct in the source CRS, but a single UTM
+    # rectangle spanning peninsular and island roads produces fictitious WGS84
+    # corners. Transform each feature envelope instead: this avoids loading
+    # geometries while retaining a tight, conservative WGS84 extent.
+    try:
+        key = (str(path.resolve()), layer, path.stat().st_mtime_ns)
+    except OSError:
+        key = (str(path), layer, 0)
+    cached = _VISOR_BOUNDS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    _, feature_bounds = pyogrio.read_bounds(path, layer=layer)
+    if feature_bounds.shape[1] == 0:
+        raise VisorRedError("La capa calibrada no contiene geometrías.")
+    min_x, min_y, max_x, max_y = feature_bounds
+    x_coordinates = (*min_x, *min_x, *max_x, *max_x)
+    y_coordinates = (*min_y, *max_y, *min_y, *max_y)
+    longitudes, latitudes = Transformer.from_crs(crs, 4326, always_xy=True).transform(x_coordinates, y_coordinates)
+    result = (float(min(longitudes)), float(min(latitudes)), float(max(longitudes)), float(max(latitudes)))
+    min_lon, min_lat, max_lon, max_lat = result
+    if not (min_lon < max_lon and min_lat < max_lat and -180 <= min_lon <= 180 and -180 <= max_lon <= 180 and -90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        raise VisorRedError("La extensión WGS84 de la capa no es válida.")
+    _VISOR_BOUNDS_CACHE.clear()
+    _VISOR_BOUNDS_CACHE[key] = result
+    return result
 
 
 def _bbox_en_capa(config: dict[str, Any], bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     info = pyogrio.read_info(viario_path(config), layer=line_layer(config))
-    converted = gpd.GeoSeries.from_wkt([f"POLYGON (({bbox[0]} {bbox[1]}, {bbox[2]} {bbox[1]}, {bbox[2]} {bbox[3]}, {bbox[0]} {bbox[3]}, {bbox[0]} {bbox[1]}))"], crs=4326).to_crs(info["crs"])
-    return tuple(map(float, converted.total_bounds))
+    return bbox_wgs84_a_crs(bbox, info["crs"])
 
 
 def _candidatos_visores(config: dict[str, Any], lon: float, lat: float, tolerance_m: float):

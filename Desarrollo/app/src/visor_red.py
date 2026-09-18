@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import geopandas as gpd
-from shapely.geometry import LineString, MultiLineString, Point
+from shapely.geometry import LineString, MultiLineString, Point, box
 from shapely.ops import linemerge, substring, unary_union
 
 from .tramo import m_values
@@ -35,6 +35,15 @@ class PuntoCalibrado:
 def is_autovia(carretera: Any, tipo_via: Any) -> bool:
     text = f"{carretera or ''} {tipo_via or ''}".lower()
     return any(token in text for token in ("autov", "autop", "motorway", "dual"))
+
+
+def bbox_wgs84_a_crs(bbox: tuple[float, float, float, float], target_crs: Any) -> tuple[float, float, float, float]:
+    """Convert a Leaflet WGS84 bbox (west, south, east, north) to a layer CRS."""
+    west, south, east, north = map(float, bbox)
+    if west >= east or south >= north:
+        raise VisorRedError("BBOX no válido.")
+    converted = gpd.GeoSeries([box(west, south, east, north)], crs=4326).to_crs(target_crs)
+    return tuple(map(float, converted.total_bounds))
 
 
 def _metric_source(lineas: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
