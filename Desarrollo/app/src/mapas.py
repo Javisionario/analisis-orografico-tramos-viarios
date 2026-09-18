@@ -187,6 +187,84 @@ def _draw_study_line(canvas: Image.Image, geometry: Any, project: Any, clip: tup
     clip_overlay(canvas, overlay, clip)
 
 
+def _road_label_style(is_autovia: bool) -> dict[str, Any]:
+    if is_autovia:
+        return {"tipo": "autovia", "relleno": (45, 83, 158, 214), "borde": "#ffffff", "texto": "#ffffff"}
+    return {"tipo": "convencional", "relleno": (255, 255, 255, 224), "borde": "#111111", "texto": "#111111"}
+
+
+def _road_label_specs(
+    tramos: list[TramoExtraido],
+    geometries: list[Any],
+    road_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Devuelve una etiqueta por carretera de estudio, solo en ámbito multivía."""
+    grouped: list[dict[str, Any]] = []
+    for tramo, geometry in zip(tramos, geometries):
+        group = next((item for item in grouped if _same_road(item["carretera"], tramo.carretera)), None)
+        if group is None:
+            group = {"carretera": tramo.carretera, "candidatos": []}
+            grouped.append(group)
+        group["candidatos"].append((tramo, geometry))
+    if len(grouped) <= 1:
+        return []
+    specs: list[dict[str, Any]] = []
+    for group in grouped:
+        candidates = group["candidatos"]
+        tramo, geometry = max(candidates, key=lambda item: (float(item[0].longitud_m), float(item[1].length)))
+        record = next((item for item in road_records if _same_road(item.get("road", ""), tramo.carretera)), None)
+        specs.append({"carretera": group["carretera"], "geometry": geometry, "estilo": _road_label_style(_is_autovia(record.get("type") if record else ""))})
+    return specs
+
+
+def _road_label_points(geometry: Any) -> list[Any]:
+    if geometry is None or geometry.is_empty:
+        return []
+    return [geometry.interpolate(fraction, normalized=True) for fraction in (0.50, 0.38, 0.62, 0.26, 0.74)]
+
+
+def _draw_road_labels(
+    canvas: Image.Image,
+    specs: list[dict[str, Any]],
+    project: Any,
+    clip: tuple[int, int, int, int],
+) -> dict[str, Any]:
+    """Dibuja rótulos discretos sin forzar posiciones que ensucien el mapa."""
+    if not specs:
+        return {"intentos": 0, "dibujadas": [], "estilos": []}
+    overlay = Image.new("RGBA", (MAP_WIDTH, MAP_HEIGHT), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    font = pil_font(52, bold=True)
+    x0, y0, width, height = clip
+    used_boxes: list[tuple[float, float, float, float]] = []
+    drawn: list[str] = []
+    styles: list[str] = []
+    padding_x, padding_y = 22, 12
+    for spec in specs:
+        text = str(spec["carretera"])
+        text_w, text_h = text_size(draw, text, font)
+        placed = False
+        for point in _road_label_points(spec["geometry"]):
+            x, y = project(point.x, point.y)
+            bbox = (x - text_w / 2 - padding_x, y - text_h / 2 - padding_y, x + text_w / 2 + padding_x, y + text_h / 2 + padding_y)
+            inside = bbox[0] >= x0 + 10 and bbox[2] <= x0 + width - 10 and bbox[1] >= y0 + 10 and bbox[3] <= y0 + height - 10
+            overlaps = any(not (bbox[2] < other[0] or other[2] < bbox[0] or bbox[3] < other[1] or other[3] < bbox[1]) for other in used_boxes)
+            if not inside or overlaps:
+                continue
+            style = spec["estilo"]
+            draw.rounded_rectangle(bbox, radius=14, fill=style["relleno"], outline=style["borde"], width=3)
+            draw.text((x, y), text, font=font, fill=style["texto"], anchor="mm")
+            used_boxes.append(bbox)
+            drawn.append(text)
+            styles.append(style["tipo"])
+            placed = True
+            break
+        if not placed:
+            continue
+    clip_overlay(canvas, overlay, clip)
+    return {"intentos": len(specs), "dibujadas": drawn, "estilos": styles}
+
+
 def _draw_slope_segments(canvas: Image.Image, tramo_geom: Any, segmentos: gpd.GeoDataFrame, project: Any, clip: tuple[int, int, int, int]) -> None:
     overlay = Image.new("RGBA", (MAP_WIDTH, MAP_HEIGHT), (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
@@ -684,7 +762,9 @@ def generar_mapa_localizacion_multitramo(
     bounds = bounds_mapa_principal_multitramo_lonlat(tramos)
     project = make_projector(bounds, MAP_MAIN)
     scope_roads = [tramo.carretera for tramo in tramos]
-    roads = _filter_background_roads(_road_records(lineas_geo, cols_lineas, bounds), vias_fondo_modo, scope_roads)
+    all_roads = _road_records(lineas_geo, cols_lineas, bounds)
+    roads = _filter_background_roads(all_roads, vias_fondo_modo, scope_roads)
+    road_label_specs = _road_label_specs(tramos, tramos_geo, all_roads)
     pk_items: list[dict[str, Any]] = []
     configs: list[dict[str, Any]] = []
     for tramo in tramos:
@@ -720,6 +800,7 @@ def generar_mapa_localizacion_multitramo(
     road_segments = _draw_background_roads(canvas, roads, project, MAP_MAIN)
     for geometry in tramos_geo:
         _draw_study_line(canvas, geometry, project, MAP_MAIN)
+    road_labels_meta = _draw_road_labels(canvas, road_label_specs, project, MAP_MAIN)
     _draw_pks(canvas, unique_items, roads, project, road_segments, MAP_MAIN)
     timings["vias_tramos_pks"] = round(perf_counter() - stage, 3)
     draw_main_outline(draw)
@@ -738,7 +819,8 @@ def generar_mapa_localizacion_multitramo(
         canvas, output_base, warnings, timings, base_ok, loc_base_ok,
         {"pks_mapa": configs, "vias_fondo_modo": vias_fondo_modo, "numero_scopes": len(tramos),
          "tramos_estudio": scope_roads, **raster_meta, **elevation_meta, **contour_meta,
-         "elevaciones_alpha": float(alpha_elevaciones), "mapa_base": basemap_config}, mapa_base,
+         "elevaciones_alpha": float(alpha_elevaciones), "etiquetas_carretera": road_labels_meta,
+         "mapa_base": basemap_config}, mapa_base,
     )
 
 

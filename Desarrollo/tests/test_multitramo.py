@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 import app as web_app  # noqa: E402
 from src import exportacion  # noqa: E402
-from src.mapas import _filter_background_roads, _subtitle, _subtitle_multitramo, bounds_mapa_principal_multitramo_lonlat  # noqa: E402
+from src.mapas import _filter_background_roads, _road_label_specs, _road_label_style, _subtitle, _subtitle_multitramo, bounds_mapa_principal_multitramo_lonlat  # noqa: E402
 from src.tramo import TramoExtraido  # noqa: E402
 
 
@@ -97,3 +97,22 @@ class MultiSegmentMapHelpersTests(unittest.TestCase):
         second = exportacion._scope_slug(study, {"_scope_prefix": "T02"}, profile=True)
         self.assertNotEqual(first, second)
         self.assertEqual(first, "T01_A-1_creciente")
+
+    def test_road_labels_are_disabled_for_a_single_distinct_road(self) -> None:
+        first, second = tramo("A-1", 1, 2), tramo("A 1", 3, 4, 0.02)
+        self.assertEqual(_road_label_specs([first, second], [first.geometry, second.geometry], []), [])
+
+    def test_road_labels_include_each_distinct_study_road_once(self) -> None:
+        first, repeated, other = tramo("A-1", 1, 2), tramo("A-1", 3, 4, 0.02), tramo("M-11", 4, 8, 0.04)
+        specs = _road_label_specs(
+            [first, repeated, other], [first.geometry, repeated.geometry, other.geometry],
+            [{"road": "A-1", "type": "Autovía"}, {"road": "M-11", "type": "Convencional"}],
+        )
+        self.assertEqual([item["carretera"] for item in specs], ["A-1", "M-11"])
+        self.assertEqual([item["estilo"]["tipo"] for item in specs], ["autovia", "convencional"])
+
+    def test_road_label_style_distinguishes_autovias(self) -> None:
+        self.assertEqual(_road_label_style(True)["texto"], "#ffffff")
+        self.assertEqual(_road_label_style(True)["tipo"], "autovia")
+        self.assertEqual(_road_label_style(False)["texto"], "#111111")
+        self.assertEqual(_road_label_style(False)["tipo"], "convencional")
