@@ -135,14 +135,16 @@ def _same_road(left: str, right: str) -> bool:
     return normalize(left) == normalize(right)
 
 
-def _filter_background_roads(roads: list[dict[str, Any]], mode: str, road_name: str) -> list[dict[str, Any]]:
+def _filter_background_roads(roads: list[dict[str, Any]], mode: str, road_name: str | list[str] | tuple[str, ...] | set[str]) -> list[dict[str, Any]]:
+    scope_roads = [road_name] if isinstance(road_name, str) else list(road_name)
+    is_scope_road = lambda value: any(_same_road(value, name) for name in scope_roads)
     mode_norm = str(mode or "todas").strip().lower()
     if mode_norm in {"ninguna", "none", "no"}:
         return []
     if mode_norm in {"ambito", "via_ambito", "solo_ambito", "solo_via"}:
-        return [road for road in roads if _same_road(road.get("road", ""), road_name)]
+        return [road for road in roads if is_scope_road(road.get("road", ""))]
     if mode_norm in {"autovias", "solo_autovias", "autovia"}:
-        return [road for road in roads if _is_autovia(road.get("type")) or _same_road(road.get("road", ""), road_name)]
+        return [road for road in roads if _is_autovia(road.get("type")) or is_scope_road(road.get("road", ""))]
     return roads
 
 
@@ -465,8 +467,24 @@ def _draw_inset(
 
 
 def _subtitle(tramo: TramoExtraido) -> list[str]:
-    sentido = str(tramo.sentido or "").capitalize()
-    return [f"{tramo.carretera} · {sentido}", f"PK {format_pk(tramo.pk_inicio_recorrido)} a {format_pk(tramo.pk_fin_recorrido)}"]
+    return [f"{tramo.carretera} · PK {format_pk(tramo.pk_inicio_recorrido)} a {format_pk(tramo.pk_fin_recorrido)}"]
+
+
+def _subtitle_multitramo(entries: list[dict[str, Any]]) -> list[str]:
+    """Subtítulo por solicitudes lógicas, no por scopes de sentido."""
+    if len(entries) <= 3:
+        return [f"{item['carretera']} · PK {format_pk(item['pk_inicio'])} a {format_pk(item['pk_fin'])}" for item in entries]
+    roads: list[str] = []
+    for item in entries:
+        road = str(item.get("carretera") or "")
+        if road and not any(_same_road(road, previous) for previous in roads):
+            roads.append(road)
+    # Mantener el bloque de título contenido sin cambiar la semántica.
+    line = " · ".join(roads)
+    if len(line) <= 54:
+        return [line]
+    split_at = max(1, len(roads) // 2)
+    return [" · ".join(roads[:split_at]), " · ".join(roads[split_at:])]
 
 
 def _finish(
@@ -533,6 +551,18 @@ def _prepare_common(
 def bounds_mapa_principal_lonlat(tramo: TramoExtraido) -> tuple[float, float, float, float]:
     tramo_geo = _to_4326_geom(tramo.geometry, tramo.crs)
     return fit_bounds_to_clip(_expanded_lonlat_bounds(tramo_geo), MAP_MAIN)
+
+
+def bounds_mapa_principal_multitramo_lonlat(tramos: list[TramoExtraido]) -> tuple[float, float, float, float]:
+    if not tramos:
+        raise ValueError("No hay tramos para calcular el encuadre.")
+    geometries = [_to_4326_geom(tramo.geometry, tramo.crs) for tramo in tramos]
+    lon_min = min(geometry.bounds[0] for geometry in geometries)
+    lat_min = min(geometry.bounds[1] for geometry in geometries)
+    lon_max = max(geometry.bounds[2] for geometry in geometries)
+    lat_max = max(geometry.bounds[3] for geometry in geometries)
+    # Reutiliza el mismo margen proporcionado del caso single sobre la unión.
+    return fit_bounds_to_clip(_expanded_lonlat_bounds(box(lon_min, lat_min, lon_max, lat_max)), MAP_MAIN)
 
 
 def generar_mapa_localizacion(
@@ -616,6 +646,99 @@ def generar_mapa_localizacion(
             "mapa_base": basemap_config,
         },
         mapa_base,
+    )
+
+
+def generar_mapa_localizacion_multitramo(
+    tramos: list[TramoExtraido],
+    lineas: gpd.GeoDataFrame,
+    cols_lineas: dict[str, str | None],
+    pks: gpd.GeoDataFrame,
+    pk_cols: dict[str, str | None],
+    admin: tuple[gpd.GeoDataFrame | None, gpd.GeoDataFrame | None],
+    raster_path: Path | None,
+    config: dict[str, Any],
+    output_base: Path,
+    pintar_pks: bool,
+    alpha_elevaciones: float,
+    vias_fondo_modo: str = "todas",
+    pk_options: dict[str, Any] | None = None,
+    subtitle_entries: list[dict[str, Any]] | None = None,
+    mostrar_anotaciones_curvas_nivel: bool = True,
+    mapa_base: str = "ign_gris",
+    carto_api_key: str | None = None,
+) -> tuple[list[Path], dict[str, Any], list[str]]:
+    """Mapa único de localización para varios scopes ya extraídos."""
+    if not tramos:
+        raise ValueError("No hay tramos válidos para el mapa de localización.")
+    warnings: list[str] = []
+    timings: dict[str, float] = {}
+    stage = perf_counter()
+    tramos_geo = [_to_4326_geom(tramo.geometry, tramo.crs) for tramo in tramos]
+    lineas_geo = _to_4326_gdf(lineas, lineas.crs if lineas is not None and not lineas.empty else tramos[0].crs)
+    pks_geo = _to_4326_gdf(pks, pks.crs if pks is not None and not pks.empty else tramos[0].crs)
+    admin_geo = (
+        _to_4326_gdf(admin[0], admin[0].crs if admin[0] is not None and not admin[0].empty else None) if admin[0] is not None else None,
+        _to_4326_gdf(admin[1], admin[1].crs if admin[1] is not None and not admin[1].empty else None) if admin[1] is not None else None,
+    )
+    bounds = bounds_mapa_principal_multitramo_lonlat(tramos)
+    project = make_projector(bounds, MAP_MAIN)
+    scope_roads = [tramo.carretera for tramo in tramos]
+    roads = _filter_background_roads(_road_records(lineas_geo, cols_lineas, bounds), vias_fondo_modo, scope_roads)
+    pk_items: list[dict[str, Any]] = []
+    configs: list[dict[str, Any]] = []
+    for tramo in tramos:
+        config_item = _resolve_pk_map_config(tramo, pintar_pks, pk_options)
+        configs.append(config_item)
+        pk_items.extend(_pk_items(pks_geo, pk_cols, tramo, bounds, config_item))
+    unique_items: list[dict[str, Any]] = []
+    seen_pks: set[tuple[float, float, float]] = set()
+    for item in pk_items:
+        key = (round(float(item["lon"]), 7), round(float(item["lat"]), 7), round(float(item["km"]), 4))
+        if key not in seen_pks:
+            unique_items.append(item)
+            seen_pks.add(key)
+    timings["preparacion_geometrias_4326"] = round(perf_counter() - stage, 3)
+
+    canvas = new_canvas()
+    draw = ImageDraw.Draw(canvas)
+    draw_main_frame(draw)
+    basemap_config: dict[str, Any] = {"principal": {}, "localizacion": {}}
+    stage = perf_counter()
+    base_ok = render_report_basemap(bounds, canvas, MAP_MAIN, basemap_config["principal"], location=False, mapa_base=mapa_base, carto_api_key=carto_api_key)
+    timings["mapa_base_principal"] = round(perf_counter() - stage, 3)
+    stage = perf_counter()
+    raster_data, raster_meta, raster_warnings = _prepared_raster_for_map(raster_path, bounds, MAP_MAIN)
+    warnings.extend(raster_warnings)
+    elevation_meta = _render_elevation_overlay(canvas, raster_data, bounds, MAP_MAIN, alpha_elevaciones, config)
+    elevation_meta.update({key: value for key, value in raster_meta.items() if key.startswith("elevaciones_")})
+    contour_meta = _draw_contours(canvas, raster_data, elevation_meta, bounds, project, MAP_MAIN, mostrar_anotaciones_curvas_nivel)
+    if contour_meta.get("advertencia_curvas"):
+        warnings.append(f"No se pudieron generar curvas de nivel: {contour_meta['advertencia_curvas']}")
+    timings["elevaciones_curvas"] = round(perf_counter() - stage, 3)
+    stage = perf_counter()
+    road_segments = _draw_background_roads(canvas, roads, project, MAP_MAIN)
+    for geometry in tramos_geo:
+        _draw_study_line(canvas, geometry, project, MAP_MAIN)
+    _draw_pks(canvas, unique_items, roads, project, road_segments, MAP_MAIN)
+    timings["vias_tramos_pks"] = round(perf_counter() - stage, 3)
+    draw_main_outline(draw)
+    stage = perf_counter()
+    loc_base_ok = _draw_inset(canvas, draw, bounds, admin_geo, basemap_config["localizacion"], mapa_base, carto_api_key)
+    timings["inset_mapa_base_admin"] = round(perf_counter() - stage, 3)
+    draw_north_arrow(draw)
+    draw_scale_bar(draw, bounds)
+    legend_y = draw_left_title(draw, "Mapa de localización", _subtitle_multitramo(subtitle_entries or []))
+    rows = [("Tramos de estudio", "#f4a3a8", "line")]
+    if elevation_meta.get("elevaciones_renderizadas"):
+        rows.append(("Elevaciones", "", "heading"))
+        rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
+    draw_legend_rows(draw, legend_y, rows)
+    return _finish(
+        canvas, output_base, warnings, timings, base_ok, loc_base_ok,
+        {"pks_mapa": configs, "vias_fondo_modo": vias_fondo_modo, "numero_scopes": len(tramos),
+         "tramos_estudio": scope_roads, **raster_meta, **elevation_meta, **contour_meta,
+         "elevaciones_alpha": float(alpha_elevaciones), "mapa_base": basemap_config}, mapa_base,
     )
 
 

@@ -54,11 +54,21 @@ PROGRESS_PHASES = [
 ]
 
 
-class GenerarRequest(BaseModel):
+class TramoRequest(BaseModel):
     carretera: str
     pk_inicio: float
     pk_fin: float
     sentido: str = "creciente"
+
+
+class GenerarRequest(BaseModel):
+    # Los campos legacy se mantienen opcionales para aceptar un payload que use
+    # exclusivamente ``tramos``. Las peticiones antiguas siguen enviándolos.
+    carretera: str | None = None
+    pk_inicio: float | None = None
+    pk_fin: float | None = None
+    sentido: str = "creciente"
+    tramos: list[TramoRequest] | None = None
     pintar_pks: bool = True
     pk_modo: str = "automatico"
     pk_simbolo_cada: int | None = None
@@ -339,6 +349,14 @@ def visor_medir(payload: MedirVisorRequest) -> dict[str, Any]:
 def generar(payload: GenerarRequest) -> JSONResponse:
     if payload.mapa_base not in {"ign_gris", "carto_positron"}:
         raise HTTPException(status_code=422, detail="Mapa base no valido.")
+    tramos = payload.tramos or []
+    if len(tramos) > 1 and (payload.generar_mapa_pendientes or payload.generar_todo):
+        raise HTTPException(
+            status_code=422,
+            detail="No se pueden generar mapas de pendientes cuando se analizan varios tramos.",
+        )
+    if not tramos and (not payload.carretera or payload.pk_inicio is None or payload.pk_fin is None):
+        raise HTTPException(status_code=422, detail="Debe indicar carretera, PK inicio y PK fin.")
     api_key_introducida = str(payload.carto_api_key or "").strip()
     if api_key_introducida and payload.recordar_carto_api_key:
         guardar_api_key_carto(api_key_introducida)
@@ -347,6 +365,9 @@ def generar(payload: GenerarRequest) -> JSONResponse:
     if payload.mapa_base == "carto_positron" and needs_maps and not api_key_efectiva:
         raise HTTPException(status_code=422, detail="Debe indicar la API key de CARTO para generar mapas con Positron.")
     params = payload.model_dump()
+    if len(tramos) == 1 and not params.get("carretera"):
+        # El formato nuevo con un solo elemento sigue el recorrido single.
+        params.update(tramos[0].model_dump())
     params["carto_api_key"] = api_key_efectiva
     job_id = uuid4().hex
     now = datetime.now().isoformat(timespec="seconds")

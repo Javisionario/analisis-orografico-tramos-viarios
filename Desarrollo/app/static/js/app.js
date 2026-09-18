@@ -111,8 +111,10 @@ window.showViewerResults = () => showRightPanel("results");
 window.showRoadViewer = () => showRightPanel("viewer");
 
 window.setRoadFromViewer = async (carretera, pkInicio = null, pkFin = null) => {
-  const startField = document.querySelector("#pkInicio");
-  const endField = document.querySelector("#pkFin");
+  const segment = activeSegment();
+  if (!segment) throw new Error("No hay tramo activo");
+  const startField = segment.querySelector('[data-role="pk-start"]');
+  const endField = segment.querySelector('[data-role="pk-end"]');
   const isWholeRange = pkInicio !== null && pkFin !== null;
   const targetField = pkInicio !== null ? startField : endField;
   const otherField = targetField === startField ? endField : startField;
@@ -126,11 +128,11 @@ window.setRoadFromViewer = async (carretera, pkInicio = null, pkFin = null) => {
   await loadRoads();
   const road = roadExact(carretera);
   if (!road) throw new Error("Carretera no encontrada");
-  selectRoad(road);
+  selectSegmentRoad(segment, road);
   if (pkInicio !== null) startField.value = Number(pkInicio).toFixed(3);
   if (pkFin !== null) endField.value = Number(pkFin).toFixed(3);
   if (pkInicio !== null && pkFin !== null) {
-    const sentido = document.querySelector("#sentido").value;
+    const sentido = segment.querySelector('[data-role="direction"]').value;
     const low = Math.min(Number(pkInicio), Number(pkFin));
     const high = Math.max(Number(pkInicio), Number(pkFin));
     startField.value = (sentido === "decreciente" ? high : low).toFixed(3);
@@ -138,7 +140,7 @@ window.setRoadFromViewer = async (carretera, pkInicio = null, pkFin = null) => {
   }
   if (pkInicio !== null) startField.dataset.viewerRoad = road.carretera;
   if (pkFin !== null) endField.dataset.viewerRoad = road.carretera;
-  await validateMainPk(true);
+  await validateSegmentPk(segment, true);
   return { ok: true };
 };
 
@@ -245,10 +247,52 @@ function formatPk(value) {
   return `${sign}${km}+${String(m).padStart(3, "0")}`;
 }
 
-function showWarnings(items) {
+const segmentList = document.querySelector("#segmentList");
+const addSegmentButton = document.querySelector("#addSegment");
+const multiSegmentWarning = document.querySelector("#multiSegmentWarning");
+const pendingMapCheckbox = document.querySelector('[name="generar_mapa_pendientes"]');
+let activeSegmentId = 1;
+let nextSegmentId = 2;
+let pendingMapBeforeMulti = null;
+const segmentRoads = new Map();
+
+function segments() { return [...segmentList.querySelectorAll(".segment-block")]; }
+function updateSegmentLabels() {
+  segments().forEach((segment, index) => {
+    const label = segment.querySelector(".segment-header strong");
+    if (label) label.textContent = `Tramo ${index + 1}`;
+  });
+}
+function activeSegment() { return segmentList.querySelector(`.segment-block[data-segment-id="${activeSegmentId}"]`) || segments()[0] || null; }
+function segmentRoad(segment) { return segmentRoads.get(segment.dataset.segmentId) || null; }
+function setSegmentActive(segment) {
+  if (!segment) return;
+  activeSegmentId = Number(segment.dataset.segmentId);
+  segments().forEach((item) => item.classList.toggle("is-active", item === segment));
+}
+function showSegmentWarnings(segment, items) {
+  const box = segment.querySelector('[data-role="pk-warnings"]');
   const clean = items.filter(Boolean);
-  pkWarnings.hidden = clean.length === 0;
-  pkWarnings.innerHTML = clean.map((item) => `<p>${item}</p>`).join("");
+  box.hidden = clean.length === 0;
+  box.innerHTML = clean.map((item) => `<p>${item}</p>`).join("");
+}
+
+function updateMultiSegmentMode() {
+  const multi = segments().length > 1;
+  if (multi && pendingMapBeforeMulti === null) pendingMapBeforeMulti = pendingMapCheckbox.checked;
+  if (multi) {
+    pendingMapCheckbox.checked = false;
+    pendingMapCheckbox.disabled = true;
+  } else if (pendingMapBeforeMulti !== null) {
+    pendingMapCheckbox.disabled = false;
+    pendingMapCheckbox.checked = pendingMapBeforeMulti;
+    pendingMapBeforeMulti = null;
+  }
+  multiSegmentWarning.hidden = !multi;
+  const help = document.querySelector("#pkAutoHelp");
+  if (help) help.textContent = multi && document.querySelector("#pkModo")?.value === "automatico"
+    ? "Automático: símbolo y etiqueta según longitud de cada tramo."
+    : "Automático: símbolo y etiqueta según longitud del tramo.";
 }
 
 async function loadRoads() {
@@ -299,22 +343,24 @@ function roadExact(value) {
   return (roadCache || []).find((item) => String(item.normalizado || normalizeRoad(item.carretera)) === target) || null;
 }
 
-function selectRoad(item) {
-  selectedRoad = item;
-  roadInput.value = item.carretera;
-  roadMessage.textContent = item.pk_min !== undefined ? `Rango real ${formatPk(item.pk_min)} a ${formatPk(item.pk_max)}` : "";
-  roadMessage.className = "field-message ok";
-  suggestionsBox.hidden = true;
-  clearRoad.classList.add("visible");
-  validateMainPk();
+function selectSegmentRoad(segment, item) {
+  segmentRoads.set(segment.dataset.segmentId, item);
+  segment.querySelector('[data-role="road"]').value = item.carretera;
+  const message = segment.querySelector('[data-role="road-message"]');
+  message.textContent = item.pk_min !== undefined ? `Rango real ${formatPk(item.pk_min)} a ${formatPk(item.pk_max)}` : "";
+  message.className = "field-message ok";
+  segment.querySelector('[data-role="suggestions"]').hidden = true;
+  segment.querySelector('[data-role="clear-road"]').classList.add("visible");
+  validateSegmentPk(segment);
 }
 
-function renderSuggestions(items, q) {
-  suggestionsBox.innerHTML = "";
+function renderSuggestions(segment, items, q) {
+  const suggestions = segment.querySelector('[data-role="suggestions"]');
+  suggestions.innerHTML = "";
   const shown = items.slice(0, SUGGESTION_LIMIT);
   if (!shown.length) {
-    suggestionsBox.innerHTML = `<div class="suggestion-empty">${q ? "No hay coincidencias" : "No hay carreteras disponibles"}</div>`;
-    suggestionsBox.hidden = false;
+    suggestions.innerHTML = `<div class="suggestion-empty">${q ? "No hay coincidencias" : "No hay carreteras disponibles"}</div>`;
+    suggestions.hidden = false;
     return;
   }
   for (const item of shown) {
@@ -322,78 +368,84 @@ function renderSuggestions(items, q) {
     button.type = "button";
     button.className = "suggestion";
     button.innerHTML = `<strong>${item.carretera}</strong><span>${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}</span>`;
-    button.addEventListener("click", () => selectRoad(item));
-    suggestionsBox.appendChild(button);
+    button.addEventListener("click", () => selectSegmentRoad(segment, item));
+    suggestions.appendChild(button);
   }
   if (items.length > shown.length) {
     const more = document.createElement("div");
     more.className = "suggestion-empty";
     more.textContent = `Mostrando ${shown.length} de ${items.length} coincidencias. Sigue escribiendo para afinar.`;
-    suggestionsBox.appendChild(more);
+    suggestions.appendChild(more);
   }
-  suggestionsBox.hidden = false;
+  suggestions.hidden = false;
 }
 
-async function refreshRoadSuggestions() {
-  const q = roadInput.value.trim();
-  clearRoad.classList.toggle("visible", q.length > 0);
-  selectedRoad = selectedRoad && normalizeRoad(selectedRoad.carretera) === normalizeRoad(q) ? selectedRoad : null;
-  roadMessage.className = "field-message";
+async function refreshSegmentSuggestions(segment) {
+  const roadInputLocal = segment.querySelector('[data-role="road"]');
+  const message = segment.querySelector('[data-role="road-message"]');
+  const q = roadInputLocal.value.trim();
+  segment.querySelector('[data-role="clear-road"]').classList.toggle("visible", q.length > 0);
+  const selected = segmentRoad(segment);
+  if (selected && normalizeRoad(selected.carretera) !== normalizeRoad(q)) segmentRoads.delete(segment.dataset.segmentId);
+  message.className = "field-message";
   try {
     await loadRoads();
-    renderSuggestions(filterRoads(q), q);
+    renderSuggestions(segment, filterRoads(q), q);
     const exact = roadExact(q);
     if (exact) {
-      selectedRoad = exact;
-      roadMessage.textContent = `Rango real ${formatPk(exact.pk_min)} a ${formatPk(exact.pk_max)}`;
-      roadMessage.className = "field-message ok";
+      segmentRoads.set(segment.dataset.segmentId, exact);
+      message.textContent = `Rango real ${formatPk(exact.pk_min)} a ${formatPk(exact.pk_max)}`;
+      message.className = "field-message ok";
     } else if (q && filterRoads(q).length === 0) {
-      roadMessage.textContent = "Carretera no encontrada";
-      roadMessage.className = "field-message error";
+      message.textContent = "Carretera no encontrada";
+      message.className = "field-message error";
     } else if (q) {
-      roadMessage.textContent = "Selecciona una carretera de la lista";
+      message.textContent = "Selecciona una carretera de la lista";
     } else {
-      roadMessage.textContent = "";
+      message.textContent = "";
     }
   } catch (error) {
-    roadMessage.textContent = String(error.message || error);
-    roadMessage.className = "field-message error";
+    message.textContent = String(error.message || error);
+    message.className = "field-message error";
   }
 }
 
-function clearRoadField() {
-  roadInput.value = "";
-  selectedRoad = null;
-  roadMessage.textContent = "";
-  roadMessage.className = "field-message";
-  suggestionsBox.hidden = true;
-  clearRoad.classList.remove("visible");
-  showWarnings([]);
-  roadInput.focus();
-  refreshRoadSuggestions();
+function clearSegmentRoad(segment) {
+  segment.querySelector('[data-role="road"]').value = "";
+  segmentRoads.delete(segment.dataset.segmentId);
+  segment.querySelector('[data-role="road-message"]').textContent = "";
+  segment.querySelector('[data-role="road-message"]').className = "field-message";
+  segment.querySelector('[data-role="suggestions"]').hidden = true;
+  segment.querySelector('[data-role="clear-road"]').classList.remove("visible");
+  showSegmentWarnings(segment, []);
+  segment.querySelector('[data-role="road"]').focus();
+  refreshSegmentSuggestions(segment);
 }
 
-async function ensureSelectedRoad() {
+async function ensureSegmentRoad(segment) {
   await loadRoads();
-  if (selectedRoad && normalizeRoad(selectedRoad.carretera) === normalizeRoad(roadInput.value)) return selectedRoad;
-  const exact = roadExact(roadInput.value);
+  const input = segment.querySelector('[data-role="road"]');
+  const selected = segmentRoad(segment);
+  if (selected && normalizeRoad(selected.carretera) === normalizeRoad(input.value)) return selected;
+  const exact = roadExact(input.value);
   if (!exact) {
-    roadMessage.textContent = "No se puede generar: carretera inexistente";
-    roadMessage.className = "field-message error";
+    const message = segment.querySelector('[data-role="road-message"]');
+    message.textContent = "No se puede generar: carretera inexistente";
+    message.className = "field-message error";
     throw new Error("Carretera inexistente");
   }
-  selectRoad(exact);
+  selectSegmentRoad(segment, exact);
   return exact;
 }
 
-async function rangeForCurrentRoad() {
-  const road = await ensureSelectedRoad();
+async function rangeForSegment(segment) {
+  const road = await ensureSegmentRoad(segment);
   const params = new URLSearchParams({
     carretera: road.carretera,
-    sentido: document.querySelector("#sentido").value,
+    sentido: segment.querySelector('[data-role="direction"]').value,
   });
-  const pkInicio = numberOrNull(document.querySelector("#pkInicio").value);
-  const pkFin = numberOrNull(document.querySelector("#pkFin").value);
+  const pkInicio = numberOrNull(segment.querySelector('[data-role="pk-start"]').value);
+  const pkFin = numberOrNull(segment.querySelector('[data-role="pk-end"]').value);
   if (pkInicio !== null) params.set("pk_inicio", pkInicio);
   if (pkFin !== null) params.set("pk_fin", pkFin);
   const response = await fetch(`/api/rango-carretera?${params.toString()}`);
@@ -401,27 +453,95 @@ async function rangeForCurrentRoad() {
   return response.json();
 }
 
-async function validateMainPk(apply = false) {
-  if (!roadInput.value.trim()) return null;
+async function validateSegmentPk(segment, apply = false) {
+  if (!segment.querySelector('[data-role="road"]').value.trim()) return null;
   try {
-    const data = await rangeForCurrentRoad();
+    const data = await rangeForSegment(segment);
     const warnings = [];
     for (const item of data.ajustes || []) {
       if (item.advertencia) {
         warnings.push(item.advertencia);
         if (apply) {
-          const field = item.campo === "pk_inicio" ? document.querySelector("#pkInicio") : document.querySelector("#pkFin");
+          const field = segment.querySelector(item.campo === "pk_inicio" ? '[data-role="pk-start"]' : '[data-role="pk-end"]');
           field.value = Number(item.ajustado).toFixed(3);
         }
       }
     }
-    showWarnings(warnings);
+    showSegmentWarnings(segment, warnings);
     return data;
   } catch (error) {
     if (apply) setStatus("Error", String(error.message || error));
     return null;
   }
 }
+
+function segmentMarkup(id) {
+  return `
+    <section class="segment-block" data-segment-id="${id}">
+      <header class="segment-header"><strong>Tramo ${id}</strong><span class="segment-active-label">Activo</span><button class="ghost segment-remove" type="button" data-role="remove-segment">Eliminar</button></header>
+      <label class="road-field"><span>Carretera</span><div class="input-wrap"><input data-role="road" autocomplete="off" placeholder="Ma-2210" required><button data-role="clear-road" class="clear-input" type="button" aria-label="Limpiar carretera">×</button></div><div data-role="suggestions" class="suggestions" hidden></div><p data-role="road-message" class="field-message"></p></label>
+      <label><span>Sentido</span><select data-role="direction"><option value="creciente">Creciente</option><option value="decreciente">Decreciente</option><option value="ambos">Ambos</option></select></label>
+      <div class="grid two"><label><span>PK inicio</span><input data-role="pk-start" type="number" step="0.001" placeholder="1.000" required></label><label><span>PK fin</span><input data-role="pk-end" type="number" step="0.001" placeholder="6.000" required></label></div>
+      <div data-role="pk-warnings" class="warnings" hidden></div>
+    </section>`;
+}
+
+function addSegment() {
+  const id = nextSegmentId++;
+  segmentList.insertAdjacentHTML("beforeend", segmentMarkup(id));
+  const segment = segments().at(-1);
+  setSegmentActive(segment);
+  updateSegmentLabels();
+  updateMultiSegmentMode();
+  segment.querySelector('[data-role="road"]').focus();
+}
+
+function removeSegment(segment) {
+  if (segments().length === 1) return;
+  const wasActive = segment === activeSegment();
+  const previous = segment.previousElementSibling || segmentList.querySelector(".segment-block");
+  segmentRoads.delete(segment.dataset.segmentId);
+  segment.remove();
+  if (wasActive) setSegmentActive(previous);
+  updateSegmentLabels();
+  updateMultiSegmentMode();
+}
+
+segmentList.addEventListener("focusin", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (segment) setSegmentActive(segment);
+});
+segmentList.addEventListener("pointerdown", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (segment) setSegmentActive(segment);
+});
+segmentList.addEventListener("input", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (!segment) return;
+  if (event.target.matches('[data-role="road"]')) refreshSegmentSuggestions(segment);
+  if (event.target.matches('[data-role="pk-start"], [data-role="pk-end"]')) {
+    delete event.target.dataset.viewerRoad;
+    updateSmoothHelp();
+    updatePkControls();
+  }
+});
+segmentList.addEventListener("change", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (segment && event.target.matches('[data-role="direction"]')) validateSegmentPk(segment, false);
+});
+segmentList.addEventListener("focusout", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (!segment) return;
+  if (event.target.matches('[data-role="road"]')) setTimeout(() => { segment.querySelector('[data-role="suggestions"]').hidden = true; }, 180);
+  if (event.target.matches('[data-role="pk-start"], [data-role="pk-end"]')) validateSegmentPk(segment, false);
+});
+segmentList.addEventListener("click", (event) => {
+  const segment = event.target.closest(".segment-block");
+  if (!segment) return;
+  if (event.target.closest('[data-role="clear-road"]')) clearSegmentRoad(segment);
+  if (event.target.closest('[data-role="remove-segment"]')) removeSegment(segment);
+});
+addSegmentButton.addEventListener("click", addSegment);
 
 function updateSmoothHelp() {
   const q = Number(smooth.value);
@@ -727,16 +847,27 @@ function updateAdvancedSlopeSgState() {
 
 function payloadFromForm() {
   const data = new FormData(form);
+  const tramos = segments().map((segment) => {
+    const road = segmentRoad(segment);
+    return {
+      carretera: road?.carretera || segment.querySelector('[data-role="road"]').value.trim(),
+      pk_inicio: Number(segment.querySelector('[data-role="pk-start"]').value),
+      pk_fin: Number(segment.querySelector('[data-role="pk-end"]').value),
+      sentido: segment.querySelector('[data-role="direction"]').value || "creciente",
+    };
+  });
+  const first = tramos[0];
   const elevAdvanced = data.get("suavizado_elevaciones_avanzado") === "on";
   const slopeAdvanced = data.get("suavizado_pendientes_avanzado") === "on";
   const elevSmooth = Number(data.get("suavizado_elevaciones") || 4);
   const slopeSmoothValueForm = Number(data.get("suavizado_pendientes") || 4);
   const cartoApiKeyValue = cartoApiKey?.dataset.storedMask === "true" ? "" : String(data.get("carto_api_key") || "");
   return {
-    carretera: selectedRoad.carretera,
-    pk_inicio: Number(data.get("pk_inicio")),
-    pk_fin: Number(data.get("pk_fin")),
-    sentido: String(data.get("sentido") || "creciente"),
+    carretera: first.carretera,
+    pk_inicio: first.pk_inicio,
+    pk_fin: first.pk_fin,
+    sentido: first.sentido,
+    ...(tramos.length > 1 ? { tramos } : {}),
     generar_mapa_localizacion: boolField(data, "generar_mapa_localizacion"),
     generar_mapa_pendientes: boolField(data, "generar_mapa_pendientes"),
     generar_perfil: boolField(data, "generar_perfil"),
@@ -947,9 +1078,6 @@ function renderResults(data) {
   showRightPanel("results");
 }
 
-roadInput.addEventListener("input", refreshRoadSuggestions);
-roadInput.addEventListener("blur", () => setTimeout(() => { suggestionsBox.hidden = true; }, 180));
-roadInput.addEventListener("focus", refreshRoadSuggestions);
 if (openHelp) openHelp.addEventListener("click", () => openHelpPanel(null, openHelp));
 if (closeHelp) closeHelp.addEventListener("click", closeHelpPanel);
 if (helpOverlay) {
@@ -983,10 +1111,6 @@ document.addEventListener("keydown", (event) => {
     first.focus();
   }
 });
-clearRoad.addEventListener("click", clearRoadField);
-document.querySelector("#pkInicio").addEventListener("blur", () => validateMainPk(false));
-document.querySelector("#pkFin").addEventListener("blur", () => validateMainPk(false));
-document.querySelector("#sentido").addEventListener("change", () => validateMainPk(false));
 smooth.addEventListener("input", updateSmoothHelp);
 if (slopeSmooth) slopeSmooth.addEventListener("input", updateSlopeSmoothHelp);
 sample.addEventListener("input", () => {
@@ -1032,13 +1156,6 @@ if (pkSimboloCada && pkEtiquetaCada) {
   pkSimboloCada.addEventListener("input", updatePkControls);
   pkEtiquetaCada.addEventListener("input", updatePkControls);
 }
-document.querySelector("#pkInicio").addEventListener("input", updateSmoothHelp);
-document.querySelector("#pkFin").addEventListener("input", updateSmoothHelp);
-document.querySelector("#pkInicio").addEventListener("input", updatePkControls);
-document.querySelector("#pkFin").addEventListener("input", updatePkControls);
-document.querySelector("#pkInicio").addEventListener("input", () => delete document.querySelector("#pkInicio").dataset.viewerRoad);
-document.querySelector("#pkFin").addEventListener("input", () => delete document.querySelector("#pkFin").dataset.viewerRoad);
-
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   resultsBox.innerHTML = "";
@@ -1052,8 +1169,10 @@ form.addEventListener("submit", async (event) => {
   const button = form.querySelector(".primary");
   button.disabled = true;
   try {
-    await ensureSelectedRoad();
-    await validateMainPk(true);
+    for (const segment of segments()) {
+      await ensureSegmentRoad(segment);
+      await validateSegmentPk(segment, true);
+    }
     const response = await fetch("/generar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1098,4 +1217,5 @@ updateAdvancedSgState();
 updateAdvancedSlopeSgState();
 updateAlphaLabels();
 updateMapBaseControls();
+updateMultiSegmentMode();
 showRightPanel("viewer");

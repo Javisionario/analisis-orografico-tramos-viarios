@@ -908,6 +908,21 @@ select:disabled {
   font-size: 12px;
 }
 
+.segment-block {
+  margin: 0 0 12px;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--line);
+  border-left: 2px solid transparent;
+}
+
+.segment-block:first-child { padding-top: 0; border-top: 0; }
+.segment-block.is-active { border-left-color: #b9cad3; padding-left: 9px; }
+.segment-header { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; font-size: 13px; }
+.segment-active-label { padding: 2px 6px; border-radius: 99px; color: #4c6572; background: #edf3f5; font-size: 10px; font-weight: 750; }
+.segment-block:not(.is-active) .segment-active-label { display: none; }
+.segment-remove { margin-left: auto; padding: 3px 7px; font-size: 11px; }
+.add-segment { width: 100%; margin-top: 2px; }
+
 .anomaly-ranges {
   padding: 10px 12px;
   border: 1px solid #eadf88;

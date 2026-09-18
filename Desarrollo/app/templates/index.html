@@ -24,36 +24,43 @@
           <details class="side-section" open>
             <summary>Ámbito</summary>
             <div class="section-body">
-              <label class="road-field">
-                <span>Carretera</span>
-                <div class="input-wrap">
-                  <input id="carretera" name="carretera" autocomplete="off" placeholder="Ma-2210" required>
-                  <button id="clearRoad" class="clear-input" type="button" aria-label="Limpiar carretera">×</button>
-                </div>
-                <div id="roadSuggestions" class="suggestions" hidden></div>
-                <p id="roadMessage" class="field-message"></p>
-              </label>
+              <div id="segmentList">
+                <section class="segment-block is-active" data-segment-id="1">
+                  <header class="segment-header"><strong>Tramo 1</strong><span class="segment-active-label">Activo</span></header>
+                  <label class="road-field">
+                    <span>Carretera</span>
+                    <div class="input-wrap">
+                      <input id="carretera" data-role="road" autocomplete="off" placeholder="Ma-2210" required>
+                      <button id="clearRoad" data-role="clear-road" class="clear-input" type="button" aria-label="Limpiar carretera">×</button>
+                    </div>
+                    <div id="roadSuggestions" data-role="suggestions" class="suggestions" hidden></div>
+                    <p id="roadMessage" data-role="road-message" class="field-message"></p>
+                  </label>
 
-              <label>
-                <span>Sentido</span>
-                <select name="sentido" id="sentido">
-                  <option value="creciente">Creciente</option>
-                  <option value="decreciente">Decreciente</option>
-                  <option value="ambos">Ambos</option>
-                </select>
-              </label>
+                  <label>
+                    <span>Sentido</span>
+                    <select data-role="direction" id="sentido">
+                      <option value="creciente">Creciente</option>
+                      <option value="decreciente">Decreciente</option>
+                      <option value="ambos">Ambos</option>
+                    </select>
+                  </label>
 
-              <div class="grid two">
-                <label>
-                  <span>PK inicio</span>
-                  <input id="pkInicio" name="pk_inicio" type="number" step="0.001" placeholder="1.000" required>
-                </label>
-                <label>
-                  <span>PK fin</span>
-                  <input id="pkFin" name="pk_fin" type="number" step="0.001" placeholder="6.000" required>
-                </label>
+                  <div class="grid two">
+                    <label>
+                      <span>PK inicio</span>
+                      <input id="pkInicio" data-role="pk-start" type="number" step="0.001" placeholder="1.000" required>
+                    </label>
+                    <label>
+                      <span>PK fin</span>
+                      <input id="pkFin" data-role="pk-end" type="number" step="0.001" placeholder="6.000" required>
+                    </label>
+                  </div>
+                  <div id="pkWarnings" data-role="pk-warnings" class="warnings" hidden></div>
+                </section>
               </div>
-              <div id="pkWarnings" class="warnings" hidden></div>
+              <button id="addSegment" type="button" class="ghost add-segment">+ Añadir otro tramo</button>
+              <p id="multiSegmentWarning" class="summary-warning" hidden>No se pueden generar mapas de pendientes cuando se analizan varios tramos.</p>
             </div>
           </details>
 

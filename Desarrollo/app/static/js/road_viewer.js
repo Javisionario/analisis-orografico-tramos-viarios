@@ -146,11 +146,26 @@
 
   function showLocateForm() {
     clearInteraction();
-    formElement.innerHTML = `<form id="viewerLocateForm" class="viewer-inline-form"><label>Carretera <input id="viewerRoad" list="viewerRoadOptions" required autocomplete="off"></label><datalist id="viewerRoadOptions"></datalist><label>PK <input id="viewerPk" type="number" min="0" step="0.001" required></label><button class="ghost" type="submit">Localizar</button></form>`;
+    formElement.innerHTML = `<form id="viewerLocateForm" class="viewer-inline-form"><label>Carretera <input id="viewerRoad" list="viewerRoadOptions" required autocomplete="off"><span id="viewerRoadRange" class="field-message"></span></label><datalist id="viewerRoadOptions"></datalist><label>PK <input id="viewerPk" type="number" min="0" step="0.001" required></label><button class="ghost" type="submit">Localizar</button></form>`;
     setResult("<p class=\"viewer-message\">Introduce una carretera y un PK para localizarlo.</p>");
+    let roads = [];
+    const normalizeRoad = (value) => String(value || "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+    const rangeText = (value) => {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "";
+      const metres = Math.round(n * 1000);
+      return `${Math.floor(metres / 1000)}+${String(Math.abs(metres % 1000)).padStart(3, "0")}`;
+    };
+    const updateRange = () => {
+      const road = roads.find((item) => normalizeRoad(item.carretera) === normalizeRoad(document.querySelector("#viewerRoad").value));
+      document.querySelector("#viewerRoadRange").textContent = road ? `Rango real ${rangeText(road.pk_min)} a ${rangeText(road.pk_max)}` : "";
+    };
     fetch("/api/carreteras").then((response) => response.ok ? response.json() : { items: [] }).then((data) => {
-      document.querySelector("#viewerRoadOptions").innerHTML = (data.items || []).map((item) => `<option value="${escapeHtml(item.carretera)}"></option>`).join("");
+      roads = data.items || [];
+      document.querySelector("#viewerRoadOptions").innerHTML = roads.map((item) => `<option value="${escapeHtml(item.carretera)}"></option>`).join("");
+      updateRange();
     }).catch(() => {});
+    document.querySelector("#viewerRoad").addEventListener("input", updateRange);
     document.querySelector("#viewerLocateForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const road = document.querySelector("#viewerRoad").value;
