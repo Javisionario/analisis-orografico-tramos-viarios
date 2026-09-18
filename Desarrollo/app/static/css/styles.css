@@ -1015,6 +1015,49 @@ select:disabled {
   }
 }
 
+.road-viewer {
+  display: grid;
+  grid-template-rows: auto auto minmax(520px, calc(100vh - 195px)) auto;
+  gap: 10px;
+}
+
+.road-viewer-toolbar,
+.viewer-actions,
+.viewer-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.road-viewer-toolbar .ghost,
+.viewer-actions .ghost,
+.viewer-inline-form .ghost {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.viewer-results-button { margin-left: auto; }
+.road-viewer-form:empty { display: none; }
+.viewer-inline-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafb; }
+.viewer-inline-form label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.viewer-inline-form input { width: 150px; height: 34px; }
+.road-viewer-map { min-height: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
+.viewer-identify-cursor { cursor: crosshair; }
+.viewer-measure-cursor { cursor: crosshair; }
+.road-viewer-result[hidden] { display: none; }
+.viewer-card, .viewer-message, .viewer-unavailable { margin: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfd; color: var(--ink); font-size: 13px; }
+.viewer-card p { margin: 8px 0; color: var(--muted); }
+.viewer-card-row { justify-content: space-between; }
+.viewer-card-row a { color: var(--accent-dark); }
+.viewer-copy { padding: 2px 5px; border: 0; border-radius: 4px; color: var(--accent-dark); background: #f8e9eb; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.viewer-actions { margin-top: 9px; }
+.viewer-unavailable { margin: 14px; }
+.viewer-results { display: none; }
+.results-panel.show-results .viewer-results { display: block; }
+.results-panel.show-results .road-viewer { display: none; }
+
 @media (max-width: 560px) {
   .topbar {
     padding: 14px 16px;
@@ -1038,4 +1081,8 @@ select:disabled {
     padding-right: 17px;
     padding-left: 17px;
   }
+
+  .road-viewer { grid-template-rows: auto auto minmax(420px, 62vh) auto; }
+  .viewer-results-button { margin-left: 0; }
+  .viewer-inline-form input { width: min(100%, 180px); }
 }

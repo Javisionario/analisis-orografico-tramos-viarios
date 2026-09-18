@@ -19,9 +19,14 @@ from starlette.requests import Request
 from src import APP_VERSION
 from src.exportacion import generar_outputs
 from src.credenciales import eliminar_api_key_carto, guardar_api_key_carto, obtener_api_key_carto
-from src.io_datos import diagnostico_capas, list_road_options, load_lineas, resolve_road_name
+from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, resolve_road_name, viario_path
 from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
+from src.visor_red import VisorRedError, agrupar_candidatos, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
+
+import geopandas as gpd
+import pyogrio
+from shapely.geometry import Point
 
 
 ROOT = Path(__file__).resolve().parent
@@ -89,6 +94,24 @@ class GenerarRequest(BaseModel):
     mostrar_anotaciones_curvas_nivel: bool = True
     alpha_elev_localizacion: float = 0.34
     alpha_elev_pendientes: float = 0.46
+
+
+class IdentificarVisorRequest(BaseModel):
+    lon: float
+    lat: float
+    tolerance_m: float
+
+
+class PuntoVisorRequest(BaseModel):
+    lon: float
+    lat: float
+
+
+class MedirVisorRequest(BaseModel):
+    p1: PuntoVisorRequest
+    p2: PuntoVisorRequest
+    tolerance_m: float
+    carretera: str | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -165,6 +188,124 @@ def rango_carretera(
         "advertencias": warnings,
         "ajustes": ajustes,
     }
+
+
+def _visor_bounds(config: dict[str, Any]) -> tuple[float, float, float, float]:
+    info = pyogrio.read_info(viario_path(config), layer=line_layer(config))
+    bounds = info.get("total_bounds")
+    crs = info.get("crs")
+    if not bounds or not crs:
+        raise VisorRedError("La capa calibrada no declara extensión o CRS.")
+    return tuple(map(float, gpd.GeoSeries.from_wkt([f"POLYGON (({bounds[0]} {bounds[1]}, {bounds[2]} {bounds[1]}, {bounds[2]} {bounds[3]}, {bounds[0]} {bounds[3]}, {bounds[0]} {bounds[1]}))"], crs=crs).to_crs(4326).total_bounds))
+
+
+def _bbox_en_capa(config: dict[str, Any], bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    info = pyogrio.read_info(viario_path(config), layer=line_layer(config))
+    converted = gpd.GeoSeries.from_wkt([f"POLYGON (({bbox[0]} {bbox[1]}, {bbox[2]} {bbox[1]}, {bbox[2]} {bbox[3]}, {bbox[0]} {bbox[3]}, {bbox[0]} {bbox[1]}))"], crs=4326).to_crs(info["crs"])
+    return tuple(map(float, converted.total_bounds))
+
+
+def _candidatos_visores(config: dict[str, Any], lon: float, lat: float, tolerance_m: float):
+    tolerance = min(max(float(tolerance_m), 1.0), 500.0)
+    source_crs = pyogrio.read_info(viario_path(config), layer=line_layer(config))["crs"]
+    click = gpd.GeoSeries([Point(lon, lat)], crs=4326).to_crs(source_crs).iloc[0]
+    bbox = (click.x - tolerance, click.y - tolerance, click.x + tolerance, click.y + tolerance)
+    lineas, cols, _notes = load_lineas_bbox(config, bbox)
+    return lineas, cols, click, tolerance
+
+
+@app.get("/api/visor/bounds")
+def visor_bounds() -> dict[str, list[list[float]]]:
+    try:
+        min_lon, min_lat, max_lon, max_lat = _visor_bounds(load_config())
+        return {"bounds": [[min_lat, min_lon], [max_lat, max_lon]]}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@app.get("/api/visor/vias")
+def visor_vias(bbox: str = Query(...)) -> dict[str, Any]:
+    try:
+        values = [float(value) for value in bbox.split(",")]
+        if len(values) != 4 or values[0] >= values[2] or values[1] >= values[3]:
+            raise ValueError("BBOX no válido.")
+        config = load_config()
+        lineas, cols, _notes = load_lineas_bbox(config, _bbox_en_capa(config, tuple(values)))
+        return vias_geojson(lineas, cols)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@app.get("/api/visor/localizar-pk")
+def visor_localizar_pk(carretera: str = Query(...), pk: float = Query(...)) -> dict[str, Any]:
+    config = load_config()
+    resolved = resolve_road_name(config, carretera)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="Carretera no encontrada.")
+    try:
+        lineas, cols, _notes = load_lineas(config, resolved)
+        result = localizar_pk(lineas, cols, resolved, pk)
+        return {"carretera": result.carretera, "pk": result.pk, "punto": punto_wgs84(result.snapped, result.crs)}
+    except VisorRedError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@app.post("/api/visor/identificar")
+def visor_identificar(payload: IdentificarVisorRequest) -> dict[str, Any]:
+    try:
+        config = load_config()
+        lineas, cols, click, tolerance = _candidatos_visores(config, payload.lon, payload.lat, payload.tolerance_m)
+        grouped = agrupar_candidatos(punto_a_pk(lineas, cols, click, tolerance))
+        if not grouped:
+            raise HTTPException(status_code=404, detail="No se encontró una vía calibrada próxima.")
+        options = []
+        for road in sorted(grouped):
+            item = min(grouped[road], key=lambda value: value.distancia_m)
+            options.append({"carretera": road, "pk": item.pk, "punto": punto_wgs84(item.snapped, item.crs)})
+        if len(options) > 1:
+            distances = sorted(min(item.distancia_m for item in grouped[road]) for road in grouped)
+            if distances[1] - distances[0] > max(1.0, tolerance * 0.15):
+                nearest = min(grouped, key=lambda road: min(item.distancia_m for item in grouped[road]))
+                options = [item for item in options if item["carretera"] == nearest]
+        return {"estado": "ok" if len(options) == 1 else "ambiguo", "opciones": options}
+    except HTTPException:
+        raise
+    except VisorRedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.post("/api/visor/medir")
+def visor_medir(payload: MedirVisorRequest) -> dict[str, Any]:
+    try:
+        config = load_config()
+        tolerance = min(max(float(payload.tolerance_m), 1.0), 500.0)
+        source_crs = pyogrio.read_info(viario_path(config), layer=line_layer(config))["crs"]
+        clicks = gpd.GeoSeries([Point(payload.p1.lon, payload.p1.lat), Point(payload.p2.lon, payload.p2.lat)], crs=4326).to_crs(source_crs)
+        nearby = []
+        cols: dict[str, str | None] | None = None
+        for click in clicks:
+            x, y = click.x, click.y
+            lineas, item_cols, _notes = load_lineas_bbox(config, (x - tolerance, y - tolerance, x + tolerance, y + tolerance))
+            nearby.append((lineas, item_cols, click))
+            cols = item_cols
+        if cols is None:
+            return {"estado": "incompatible", "carreteras": []}
+        first = agrupar_candidatos(punto_a_pk(nearby[0][0], cols, nearby[0][2], tolerance))
+        second = agrupar_candidatos(punto_a_pk(nearby[1][0], cols, nearby[1][2], tolerance))
+        common = sorted(set(first) & set(second))
+        if payload.carretera:
+            common = [road for road in common if road == payload.carretera]
+        if not common:
+            return {"estado": "incompatible", "carreteras": []}
+        if len(common) > 1 and not payload.carretera:
+            return {"estado": "ambiguo", "carreteras": common}
+        road = common[0]
+        full_road, full_cols, _notes = load_lineas(config, road)
+        return medir(full_road, full_cols, clicks.iloc[0], clicks.iloc[1], tolerance, road)
+    except VisorRedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.post("/generar")

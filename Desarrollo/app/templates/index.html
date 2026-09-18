@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Herramienta de Análisis Orográfico de Tramos Viarios</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <link rel="stylesheet" href="/static/css/styles.css">
   </head>
   <body>
@@ -255,13 +256,26 @@
         </form>
       </aside>
 
-      <section class="results-panel">
+      <section class="results-panel" id="rightPanel">
+        <section class="road-viewer" id="roadViewer" aria-label="Visor de red viaria">
+          <div class="road-viewer-toolbar" role="toolbar" aria-label="Herramientas del visor">
+            <button type="button" class="ghost" data-viewer-tool="locate">Localizar PK</button>
+            <button type="button" class="ghost" data-viewer-tool="identify">Identificar PK</button>
+            <button type="button" class="ghost" data-viewer-tool="measure">Medir</button>
+            <button type="button" class="ghost viewer-results-button" id="viewerResultsButton" hidden>Volver a resultados</button>
+          </div>
+          <div class="road-viewer-form" id="roadViewerForm" aria-live="polite"></div>
+          <div class="road-viewer-map" id="roadViewerMap"></div>
+          <div class="road-viewer-result" id="roadViewerResult" aria-live="polite"></div>
+        </section>
+        <div class="viewer-results" id="viewerResults">
         <div class="status" id="status">
           <h2>Resultados</h2>
           <p>Define un ámbito y genera los mapas para ver los resultados aquí.</p>
         </div>
         <div id="zipDownloads" class="zip-downloads"></div>
         <div id="results" class="results"></div>
+        </div>
       </section>
     </main>
 
@@ -344,6 +358,8 @@
       </aside>
     </div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/js/road_viewer.js"></script>
     <script src="/static/js/app.js"></script>
   </body>
 </html>

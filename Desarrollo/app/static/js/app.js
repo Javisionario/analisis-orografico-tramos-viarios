@@ -7,6 +7,7 @@ const roadMessage = document.querySelector("#roadMessage");
 const pkWarnings = document.querySelector("#pkWarnings");
 const resultsBox = document.querySelector("#results");
 const zipDownloads = document.querySelector("#zipDownloads");
+const rightPanel = document.querySelector("#rightPanel");
 const smooth = document.querySelector("#suavizado");
 const smoothValue = document.querySelector("#smoothValue");
 const smoothHelp = document.querySelector("#smoothHelp");
@@ -99,6 +100,32 @@ let cartoShowPressed = false;
 function setStatus(title, text) {
   statusBox.innerHTML = `<h2>${title}</h2><p>${text}</p>`;
 }
+
+function showRightPanel(state) {
+  const resultsVisible = state !== "viewer";
+  rightPanel.classList.toggle("show-results", resultsVisible);
+  if (state === "viewer") window.roadViewer?.show();
+}
+
+window.showViewerResults = () => showRightPanel("results");
+window.showRoadViewer = () => showRightPanel("viewer");
+
+window.setRoadFromViewer = async (carretera, pkInicio = null, pkFin = null) => {
+  await loadRoads();
+  const road = roadExact(carretera);
+  if (!road) throw new Error("Carretera no encontrada");
+  selectRoad(road);
+  if (pkInicio !== null) document.querySelector("#pkInicio").value = Number(pkInicio).toFixed(3);
+  if (pkFin !== null) document.querySelector("#pkFin").value = Number(pkFin).toFixed(3);
+  if (pkInicio !== null && pkFin !== null) {
+    const sentido = document.querySelector("#sentido").value;
+    const low = Math.min(Number(pkInicio), Number(pkFin));
+    const high = Math.max(Number(pkInicio), Number(pkFin));
+    document.querySelector("#pkInicio").value = (sentido === "decreciente" ? high : low).toFixed(3);
+    document.querySelector("#pkFin").value = (sentido === "decreciente" ? low : high).toFixed(3);
+  }
+  await validateMainPk(true);
+};
 
 function openHelpPanel(targetId = null, trigger = null) {
   if (!helpOverlay || !helpPanel) return;
@@ -899,6 +926,10 @@ function renderResults(data) {
     + accordion("Perfil longitudinal sin pendiente", previewImages(profilesWithoutSlope), false)
     + accordion("Datos auxiliares y metadatos", dataLinks(dataItems), false);
   renderZipButtons(data.zip_downloads);
+  statusBox.insertAdjacentHTML("beforeend", '<p><button type="button" class="ghost" id="backToViewer">Volver al visor</button></p>');
+  document.querySelector("#backToViewer")?.addEventListener("click", () => showRightPanel("viewer"));
+  window.roadViewer?.setHasResults(true);
+  showRightPanel("results");
 }
 
 roadInput.addEventListener("input", refreshRoadSuggestions);
@@ -995,6 +1026,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   resultsBox.innerHTML = "";
   zipDownloads.innerHTML = "";
+  showRightPanel("generating");
   loadingStartedAt = performance.now();
   lastProgress = { fase_indice: 1, fases_total: PROGRESS_PHASES.length };
   renderLoading(lastProgress);
@@ -1049,3 +1081,4 @@ updateAdvancedSgState();
 updateAdvancedSlopeSgState();
 updateAlphaLabels();
 updateMapBaseControls();
+showRightPanel("viewer");

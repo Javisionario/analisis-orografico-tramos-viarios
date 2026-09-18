@@ -38,7 +38,12 @@ def _field(cols: dict[str, str | None], name: str) -> str:
     return value
 
 
-def _m_values(gdf: gpd.GeoDataFrame, cols: dict[str, str | None]) -> tuple[str, str, float]:
+def m_values(gdf: gpd.GeoDataFrame, cols: dict[str, str | None]) -> tuple[str, str, float]:
+    """Return the calibrated fields and their conversion to metres.
+
+    This small public helper is shared by the interactive viewer so both entry
+    points apply exactly the same field-name and fallback rules.
+    """
     m0 = _field(cols, "m_inicio")
     m1 = _field(cols, "m_fin")
     names = [m0.lower(), m1.lower()]
@@ -62,6 +67,10 @@ def _m_values(gdf: gpd.GeoDataFrame, cols: dict[str, str | None]) -> tuple[str, 
     values = [v for v in values if v is not None]
     scale = 1000.0 if values and max(abs(v) for v in values) < 2000 else 1.0
     return m0, m1, scale
+
+
+# Backwards-compatible private name used by the existing extraction code/tests.
+_m_values = m_values
 
 
 def _normaliza_sentido(sentido: str) -> str:
