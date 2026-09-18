@@ -333,6 +333,13 @@
             <p>Los <strong>grados bajos</strong> generan curvas más simples y estables y, en general, tienden a suavizar más. Los <strong>grados altos</strong> permiten conservar mejor cambios y curvaturas locales, pero también pueden seguir pequeñas oscilaciones de los datos.</p>
             <p>El grado polinómico siempre debe ser <strong>menor que el número de puntos de la ventana</strong>.</p>
           </section>
+
+          <section id="help-anomalous-slopes">
+            <h3>Pendientes anómalas</h3>
+            <p>Como se ha indicado, el MDT representa la superficie del terreno, por lo que puede diferir de la rasante real de la carretera en situaciones en las que esta no coincide con la superficie topográfica. Aunque las pequeñas irregularidades puntuales son absorbidas por el suavizado, <strong>túneles y viaductos prolongados requieren otra solución.</strong></p>
+            <p>El selector <strong>Umbral de pendiente anómala</strong> permite indicar a partir de qué pendiente se considera que la lectura puede no representar correctamente la rasante de la carretera. Cuando se supera este valor, <strong>la pendiente y la orografía se aplanan artificialmente en el perfil</strong> hasta volver a situarse dentro del umbral.</p>
+            <p>De este modo se evita que estas discrepancias del MDT introduzcan valores extremos que distorsionen el perfil y, al mismo tiempo, <strong>se facilita la identificación de zonas que pueden corresponder a túneles, viaductos u otras estructuras.</strong></p>
+          </section>
         </div>
       </aside>
     </div>
