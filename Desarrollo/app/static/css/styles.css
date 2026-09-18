@@ -1019,11 +1019,12 @@ select:disabled {
   display: grid;
   grid-template-areas:
     "toolbar"
+    "notice"
     "form"
     "result"
     "network"
     "map";
-  grid-template-rows: auto auto auto auto minmax(520px, calc(100vh - 195px));
+  grid-template-rows: auto auto auto auto auto minmax(520px, calc(100vh - 195px));
   gap: 10px;
 }
 
@@ -1046,6 +1047,8 @@ select:disabled {
 
 .viewer-results-button { margin-left: auto; }
 .road-viewer-toolbar { grid-area: toolbar; }
+.road-viewer-notice { grid-area: notice; max-height: 48px; margin: 0; overflow: hidden; padding: 7px 10px; border: 1px solid #ead8b5; border-radius: 6px; color: #73551f; background: #fff9ed; font-size: 12px; line-height: 1.35; opacity: 1; transition: opacity 160ms ease, max-height 160ms ease, padding 160ms ease, border-width 160ms ease; }
+.road-viewer-notice[hidden] { display: block; max-height: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; border-bottom-width: 0; opacity: 0; pointer-events: none; }
 .road-viewer-form { grid-area: form; }
 .road-viewer-form:empty { display: none; }
 .road-viewer-network-status { margin: 0; color: var(--muted); font-size: 12px; }
@@ -1057,13 +1060,15 @@ select:disabled {
 .road-viewer-network-status { grid-area: network; }
 .road-viewer-result { grid-area: result; }
 .road-viewer-map .leaflet-control-layers { padding: 5px 7px; font-size: 12px; line-height: 1.25; }
-.road-viewer-map .leaflet-control-layers label { display: block; margin: 3px 0; }
+.road-viewer-map .leaflet-control-layers label { display: block; margin: 3px 0; white-space: nowrap; }
+.road-viewer-map .leaflet-control-layers label > span { display: inline-flex; align-items: center; gap: 4px; margin: 0; color: inherit; font-size: inherit; font-weight: inherit; }
+.road-viewer-map .leaflet-control-layers label span span { display: inline; margin: 0; }
 .road-viewer-map .leaflet-control-layers input { width: auto; height: auto; margin: 0 4px 0 0; padding: 0; vertical-align: middle; }
 .road-viewer-map .leaflet-control-layers-base label + label,
 .road-viewer-map .leaflet-control-layers-overlays label + label { margin-top: 3px; }
 .road-viewer-map .leaflet-control-layers-separator { margin: 4px 0; }
 .road-viewer-map .leaflet-control-layers-toggle { width: 30px; height: 30px; background-size: 18px 18px; }
-.viewer-marker-tooltip { border: 0; border-radius: 4px; box-shadow: 0 1px 4px rgba(23, 33, 43, 0.22); color: #fff; font-weight: 700; }
+.viewer-marker-tooltip { border: 0; border-radius: 4px; box-shadow: 0 1px 4px rgba(23, 33, 43, 0.22); color: #fff; font-weight: 700; opacity: 0.86; }
 .viewer-marker-tooltip.locate { background: #2878b8; }
 .viewer-marker-tooltip.identify { background: #9d1c25; }
 .viewer-marker-tooltip.measure { background: #2f7d4f; }
@@ -1108,7 +1113,7 @@ select:disabled {
     padding-left: 17px;
   }
 
-  .road-viewer { grid-template-rows: auto auto auto auto minmax(420px, 62vh); }
+  .road-viewer { grid-template-rows: auto auto auto auto auto minmax(420px, 62vh); }
   .viewer-results-button { margin-left: 0; }
   .viewer-inline-form input { width: min(100%, 180px); }
 }

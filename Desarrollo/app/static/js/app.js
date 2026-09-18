@@ -111,20 +111,35 @@ window.showViewerResults = () => showRightPanel("results");
 window.showRoadViewer = () => showRightPanel("viewer");
 
 window.setRoadFromViewer = async (carretera, pkInicio = null, pkFin = null) => {
+  const startField = document.querySelector("#pkInicio");
+  const endField = document.querySelector("#pkFin");
+  const isWholeRange = pkInicio !== null && pkFin !== null;
+  const targetField = pkInicio !== null ? startField : endField;
+  const otherField = targetField === startField ? endField : startField;
+  if (!isWholeRange && otherField.dataset.viewerRoad && normalizeRoad(otherField.dataset.viewerRoad) !== normalizeRoad(carretera)) {
+    return {
+      ok: false,
+      reason: "different-road",
+      message: "El punto seleccionado no pertenece a la misma vía que el otro extremo del tramo.",
+    };
+  }
   await loadRoads();
   const road = roadExact(carretera);
   if (!road) throw new Error("Carretera no encontrada");
   selectRoad(road);
-  if (pkInicio !== null) document.querySelector("#pkInicio").value = Number(pkInicio).toFixed(3);
-  if (pkFin !== null) document.querySelector("#pkFin").value = Number(pkFin).toFixed(3);
+  if (pkInicio !== null) startField.value = Number(pkInicio).toFixed(3);
+  if (pkFin !== null) endField.value = Number(pkFin).toFixed(3);
   if (pkInicio !== null && pkFin !== null) {
     const sentido = document.querySelector("#sentido").value;
     const low = Math.min(Number(pkInicio), Number(pkFin));
     const high = Math.max(Number(pkInicio), Number(pkFin));
-    document.querySelector("#pkInicio").value = (sentido === "decreciente" ? high : low).toFixed(3);
-    document.querySelector("#pkFin").value = (sentido === "decreciente" ? low : high).toFixed(3);
+    startField.value = (sentido === "decreciente" ? high : low).toFixed(3);
+    endField.value = (sentido === "decreciente" ? low : high).toFixed(3);
   }
+  if (pkInicio !== null) startField.dataset.viewerRoad = road.carretera;
+  if (pkFin !== null) endField.dataset.viewerRoad = road.carretera;
   await validateMainPk(true);
+  return { ok: true };
 };
 
 function openHelpPanel(targetId = null, trigger = null) {
@@ -1021,6 +1036,8 @@ document.querySelector("#pkInicio").addEventListener("input", updateSmoothHelp);
 document.querySelector("#pkFin").addEventListener("input", updateSmoothHelp);
 document.querySelector("#pkInicio").addEventListener("input", updatePkControls);
 document.querySelector("#pkFin").addEventListener("input", updatePkControls);
+document.querySelector("#pkInicio").addEventListener("input", () => delete document.querySelector("#pkInicio").dataset.viewerRoad);
+document.querySelector("#pkFin").addEventListener("input", () => delete document.querySelector("#pkFin").dataset.viewerRoad);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

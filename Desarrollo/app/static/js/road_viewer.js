@@ -12,18 +12,19 @@
   };
   const NETWORK_STYLES = {
     conventional: {
-      casing: { color: "#47515c", weight: 4.6, opacity: 0.36 },
-      interior: { color: "#ffffff", weight: 2, opacity: 0.64 },
+      casing: { color: "#47515c", weight: 4, opacity: 0.3 },
+      interior: { color: "#ffffff", weight: 1.6, opacity: 0.58 },
     },
     autovia: {
-      casing: { color: "#31546e", weight: 5.8, opacity: 0.42 },
-      interior: { color: "#4f98c7", weight: 2.8, opacity: 0.68 },
+      casing: { color: "#34495e", weight: 5.2, opacity: 0.37 },
+      interior: { color: "#3f8fc4", weight: 2.6, opacity: 0.64 },
     },
   };
   const mapElement = document.querySelector("#roadViewerMap");
   const formElement = document.querySelector("#roadViewerForm");
   const resultElement = document.querySelector("#roadViewerResult");
   const resultsButton = document.querySelector("#viewerResultsButton");
+  const noticeElement = document.querySelector("#roadViewerNotice");
   const networkStatus = document.querySelector("#roadViewerNetworkStatus");
   let map = null;
   let roadsLayer = null;
@@ -35,6 +36,7 @@
   let roadsRequestId = 0;
   let resizeFrame = null;
   let invalidBoundsRetries = 0;
+  let noticeTimer = null;
   let hasResults = false;
 
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -62,6 +64,14 @@
     networkStatus.textContent = message;
     networkStatus.hidden = !message;
     networkStatus.classList.toggle("error", Boolean(message && isError));
+  }
+
+  function showViewerNotice(message, type = "warning", duration = 3200) {
+    clearTimeout(noticeTimer);
+    noticeElement.textContent = message;
+    noticeElement.dataset.type = type;
+    noticeElement.hidden = !message;
+    if (message) noticeTimer = setTimeout(() => { noticeElement.hidden = true; }, duration);
   }
 
   function copyText(value, button) {
@@ -103,11 +113,16 @@
   async function usePk(pk, target) {
     if (typeof window.setRoadFromViewer !== "function") return;
     const current = resultElement.querySelector("[data-road]")?.dataset.road;
-    if (current) await window.setRoadFromViewer(current, target === "inicio" ? pk : null, target === "fin" ? pk : null);
+    if (!current) return;
+    const result = await window.setRoadFromViewer(current, target === "inicio" ? pk : null, target === "fin" ? pk : null);
+    if (result?.ok === false && result.reason === "different-road") showViewerNotice(result.message);
   }
 
   async function useTramo(road, pk1, pk2) {
-    if (typeof window.setRoadFromViewer === "function") await window.setRoadFromViewer(road, pk1, pk2);
+    if (typeof window.setRoadFromViewer === "function") {
+      const result = await window.setRoadFromViewer(road, pk1, pk2);
+      if (result?.ok === false && result.reason === "different-road") showViewerNotice(result.message);
+    }
   }
 
   function toleranceMetres(lat) {
@@ -168,7 +183,7 @@
   function drawPoint(point, label, tool) {
     const style = INTERACTION_STYLES[tool];
     L.circleMarker([point.lat, point.lon], { radius: 7, color: style.color, weight: 2, fillColor: style.fillColor, fillOpacity: 1 })
-      .bindTooltip(label, { permanent: true, direction: "top", className: `viewer-marker-tooltip ${tool}` })
+      .bindTooltip(label, { permanent: true, direction: "top", offset: [0, -11], className: `viewer-marker-tooltip ${tool}` })
       .addTo(measureLayer);
   }
 
@@ -210,8 +225,8 @@
       drawPoint(data.p2, `${data.carretera} · PK ${pkText(data.pk2)}`, "measure");
       L.geoJSON(data.geometry, { style: { color: INTERACTION_STYLES.measure.color, weight: 5, opacity: 0.82 } }).addTo(measureLayer);
       const title = `${data.carretera} · PK ${pkText(data.pk1)} → PK ${pkText(data.pk2)}`;
-      const value = `${(data.distancia_geometria_m / 1000).toFixed(2)} km · ΔPK ${(data.diferencia_pk_m / 1000).toFixed(2)} km`;
-      setResult(`<div class="viewer-card"><div class="viewer-card-row"><strong>${escapeHtml(title)}</strong><button type="button" class="viewer-copy" aria-label="Copiar medición" data-copy="${escapeHtml(title)}">copiar</button></div><p>Sobre la vía ${escapeHtml(value)}</p><div class="viewer-actions"><button type="button" class="ghost" data-use-tramo data-road="${escapeHtml(data.carretera)}" data-pk1="${data.pk1}" data-pk2="${data.pk2}">Usar este tramo</button><button type="button" class="ghost" data-clear-interaction>Borrar medición</button></div></div>`);
+      const value = `Longitud sobre la vía: ${(data.distancia_geometria_m / 1000).toFixed(2)} km · Diferencia entre PK: ${(data.diferencia_pk_m / 1000).toFixed(2)} km`;
+      setResult(`<div class="viewer-card"><div class="viewer-card-row"><strong>${escapeHtml(title)}</strong><button type="button" class="viewer-copy" aria-label="Copiar medición" data-copy="${escapeHtml(title)}">copiar</button></div><p>${escapeHtml(value)}</p><div class="viewer-actions"><button type="button" class="ghost" data-use-tramo data-road="${escapeHtml(data.carretera)}" data-pk1="${data.pk1}" data-pk2="${data.pk2}">Usar este tramo</button><button type="button" class="ghost" data-clear-interaction>Borrar medición</button></div></div>`);
     } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
   }
 
