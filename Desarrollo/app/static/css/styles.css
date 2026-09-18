@@ -1020,10 +1020,10 @@ select:disabled {
   grid-template-areas:
     "toolbar"
     "form"
+    "result"
     "network"
-    "map"
-    "result";
-  grid-template-rows: auto auto auto minmax(520px, calc(100vh - 195px)) auto;
+    "map";
+  grid-template-rows: auto auto auto auto minmax(520px, calc(100vh - 195px));
   gap: 10px;
 }
 
@@ -1056,6 +1056,20 @@ select:disabled {
 .road-viewer-map { grid-area: map; min-height: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
 .road-viewer-network-status { grid-area: network; }
 .road-viewer-result { grid-area: result; }
+.road-viewer-map .leaflet-control-layers { padding: 5px 7px; font-size: 12px; line-height: 1.25; }
+.road-viewer-map .leaflet-control-layers label { display: block; margin: 3px 0; }
+.road-viewer-map .leaflet-control-layers input { width: auto; height: auto; margin: 0 4px 0 0; padding: 0; vertical-align: middle; }
+.road-viewer-map .leaflet-control-layers-base label + label,
+.road-viewer-map .leaflet-control-layers-overlays label + label { margin-top: 3px; }
+.road-viewer-map .leaflet-control-layers-separator { margin: 4px 0; }
+.road-viewer-map .leaflet-control-layers-toggle { width: 30px; height: 30px; background-size: 18px 18px; }
+.viewer-marker-tooltip { border: 0; border-radius: 4px; box-shadow: 0 1px 4px rgba(23, 33, 43, 0.22); color: #fff; font-weight: 700; }
+.viewer-marker-tooltip.locate { background: #2878b8; }
+.viewer-marker-tooltip.identify { background: #9d1c25; }
+.viewer-marker-tooltip.measure { background: #2f7d4f; }
+.viewer-marker-tooltip.locate.leaflet-tooltip-top::before { border-top-color: #2878b8; }
+.viewer-marker-tooltip.identify.leaflet-tooltip-top::before { border-top-color: #9d1c25; }
+.viewer-marker-tooltip.measure.leaflet-tooltip-top::before { border-top-color: #2f7d4f; }
 .viewer-identify-cursor { cursor: crosshair; }
 .viewer-measure-cursor { cursor: crosshair; }
 .road-viewer-result[hidden] { display: none; }
@@ -1094,7 +1108,7 @@ select:disabled {
     padding-left: 17px;
   }
 
-  .road-viewer { grid-template-rows: auto auto auto minmax(420px, 62vh) auto; }
+  .road-viewer { grid-template-rows: auto auto auto auto minmax(420px, 62vh); }
   .viewer-results-button { margin-left: 0; }
   .viewer-inline-form input { width: min(100%, 180px); }
 }

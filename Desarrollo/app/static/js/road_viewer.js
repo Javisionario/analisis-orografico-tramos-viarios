@@ -5,6 +5,21 @@
   const ROAD_LAYER_MIN_ZOOM = 10;
   const SNAP_TOLERANCE_PX = 20;
   const MAX_SNAP_TOLERANCE_M = 500;
+  const INTERACTION_STYLES = {
+    locate: { color: "#2878b8", fillColor: "#ffffff" },
+    identify: { color: "#9d1c25", fillColor: "#ffffff" },
+    measure: { color: "#2f7d4f", fillColor: "#ffffff" },
+  };
+  const NETWORK_STYLES = {
+    conventional: {
+      casing: { color: "#47515c", weight: 4.6, opacity: 0.36 },
+      interior: { color: "#ffffff", weight: 2, opacity: 0.64 },
+    },
+    autovia: {
+      casing: { color: "#31546e", weight: 5.8, opacity: 0.42 },
+      interior: { color: "#4f98c7", weight: 2.8, opacity: 0.68 },
+    },
+  };
   const mapElement = document.querySelector("#roadViewerMap");
   const formElement = document.querySelector("#roadViewerForm");
   const resultElement = document.querySelector("#roadViewerResult");
@@ -40,6 +55,7 @@
     }));
     resultElement.querySelectorAll("[data-measure-road]").forEach((button) => button.addEventListener("click", () => requestMeasure(button.dataset.measureRoad)));
     resultElement.querySelectorAll("[data-use-tramo]").forEach((button) => button.addEventListener("click", () => useTramo(button.dataset.road, button.dataset.pk1, button.dataset.pk2)));
+    resultElement.querySelectorAll("[data-clear-interaction]").forEach((button) => button.addEventListener("click", () => clearInteractionGraphics(true)));
   }
 
   function setNetworkStatus(message = "", isError = false) {
@@ -69,14 +85,18 @@
     try { document.execCommand("copy"); done(); } finally { area.remove(); }
   }
 
-  function resultCard(item, options = {}) {
+  function roadPkLabel(item) {
+    return `${item.carretera} · PK ${pkText(item.pk)}`;
+  }
+
+  function resultCard(item) {
     const point = item.punto;
-    const roadPk = `${item.carretera} · PK ${pkText(item.pk)}`;
+    const roadPk = roadPkLabel(item);
     const coordinates = coordsText(point);
     return `<div class="viewer-card">
       <div class="viewer-card-row"><strong>${escapeHtml(roadPk)}</strong><button type="button" class="viewer-copy" aria-label="Copiar carretera y PK" data-copy="${escapeHtml(roadPk)}">copiar</button></div>
       <div class="viewer-card-row"><a href="${streetViewUrl(point)}" target="_blank" rel="noopener noreferrer">${escapeHtml(coordinates)} ↗</a><button type="button" class="viewer-copy" aria-label="Copiar coordenadas" data-copy="${escapeHtml(coordinates)}">copiar</button></div>
-      <div class="viewer-actions"><button type="button" class="ghost" data-zoom data-lat="${point.lat}" data-lon="${point.lon}">Zoom</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="inicio">Usar como PK inicio</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="fin">Usar como PK fin</button></div>
+      <div class="viewer-actions"><button type="button" class="ghost" data-zoom data-lat="${point.lat}" data-lon="${point.lon}">Zoom</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="inicio">Usar como PK inicio</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="fin">Usar como PK fin</button><button type="button" class="ghost" data-clear-interaction>Borrar marcador</button></div>
     </div>`;
   }
 
@@ -98,13 +118,20 @@
   function clearInteraction() {
     mode = null;
     measurePoints = [];
+    clearInteractionGraphics();
     mapElement.classList.remove("viewer-identify-cursor", "viewer-measure-cursor");
     formElement.innerHTML = "";
+  }
+
+  function clearInteractionGraphics(resetMeasure = false) {
+    measureLayer?.clearLayers();
+    if (resetMeasure) measurePoints = [];
   }
 
   function showLocateForm() {
     clearInteraction();
     formElement.innerHTML = `<form id="viewerLocateForm" class="viewer-inline-form"><label>Carretera <input id="viewerRoad" list="viewerRoadOptions" required autocomplete="off"></label><datalist id="viewerRoadOptions"></datalist><label>PK <input id="viewerPk" type="number" min="0" step="0.001" required></label><button class="ghost" type="submit">Localizar</button></form>`;
+    setResult("<p class=\"viewer-message\">Introduce una carretera y un PK para localizarlo.</p>");
     fetch("/api/carreteras").then((response) => response.ok ? response.json() : { items: [] }).then((data) => {
       document.querySelector("#viewerRoadOptions").innerHTML = (data.items || []).map((item) => `<option value="${escapeHtml(item.carretera)}"></option>`).join("");
     }).catch(() => {});
@@ -113,12 +140,12 @@
       const road = document.querySelector("#viewerRoad").value;
       const pk = document.querySelector("#viewerPk").value;
       try {
+        clearInteractionGraphics();
         const response = await fetch(`/api/visor/localizar-pk?${new URLSearchParams({ carretera: road, pk })}`);
         const item = await response.json();
         if (!response.ok) throw new Error(item.detail || "No se pudo localizar el PK.");
-        item.punto && drawPoint(item.punto, "PK");
+        item.punto && drawPoint(item.punto, roadPkLabel(item), "locate");
         setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
-        focusMapPoint({ lat: item.punto.lat, lng: item.punto.lon });
       } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
     });
   }
@@ -138,11 +165,15 @@
     setResult("<p class=\"viewer-message\">Selecciona dos puntos sobre la misma carretera.</p>");
   }
 
-  function drawPoint(point, label) {
-    L.circleMarker([point.lat, point.lon], { radius: 7, color: "#9d1c25", weight: 2, fillColor: "#fff", fillOpacity: 1 }).bindTooltip(label, { permanent: true, direction: "top" }).addTo(measureLayer);
+  function drawPoint(point, label, tool) {
+    const style = INTERACTION_STYLES[tool];
+    L.circleMarker([point.lat, point.lon], { radius: 7, color: style.color, weight: 2, fillColor: style.fillColor, fillOpacity: 1 })
+      .bindTooltip(label, { permanent: true, direction: "top", className: `viewer-marker-tooltip ${tool}` })
+      .addTo(measureLayer);
   }
 
   async function identify(latlng) {
+    clearInteractionGraphics();
     try {
       const response = await fetch("/api/visor/identificar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lon: latlng.lng, lat: latlng.lat, tolerance_m: toleranceMetres(latlng.lat) }) });
       const data = await response.json();
@@ -150,10 +181,10 @@
       if (data.estado === "ambiguo") {
         setResult(`<div class="viewer-card"><p>Hay varias vías posibles:</p>${data.opciones.map((item) => `<button class="ghost" type="button" data-identify-option="${escapeHtml(JSON.stringify(item))}">${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</button>`).join(" ")}</div>`);
         resultElement.querySelectorAll("[data-identify-option]").forEach((button) => button.addEventListener("click", () => {
-          const item = JSON.parse(button.dataset.identifyOption); drawPoint(item.punto, "PK"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
+          const item = JSON.parse(button.dataset.identifyOption); clearInteractionGraphics(); drawPoint(item.punto, roadPkLabel(item), "identify"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
         }));
       } else {
-        const item = data.opciones[0]; drawPoint(item.punto, "PK"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
+        const item = data.opciones[0]; drawPoint(item.punto, roadPkLabel(item), "identify"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
       }
     } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
   }
@@ -175,11 +206,12 @@
         return;
       }
       measureLayer.clearLayers();
-      drawPoint(data.p1, "1"); drawPoint(data.p2, "2");
-      L.geoJSON(data.geometry, { style: { color: "#9d1c25", weight: 5, opacity: 0.9 } }).addTo(measureLayer);
+      drawPoint(data.p1, `${data.carretera} · PK ${pkText(data.pk1)}`, "measure");
+      drawPoint(data.p2, `${data.carretera} · PK ${pkText(data.pk2)}`, "measure");
+      L.geoJSON(data.geometry, { style: { color: INTERACTION_STYLES.measure.color, weight: 5, opacity: 0.82 } }).addTo(measureLayer);
       const title = `${data.carretera} · PK ${pkText(data.pk1)} → PK ${pkText(data.pk2)}`;
       const value = `${(data.distancia_geometria_m / 1000).toFixed(2)} km · ΔPK ${(data.diferencia_pk_m / 1000).toFixed(2)} km`;
-      setResult(`<div class="viewer-card"><div class="viewer-card-row"><strong>${escapeHtml(title)}</strong><button type="button" class="viewer-copy" aria-label="Copiar medición" data-copy="${escapeHtml(title)}">copiar</button></div><p>Sobre la vía ${escapeHtml(value)}</p><div class="viewer-actions"><button type="button" class="ghost" data-use-tramo data-road="${escapeHtml(data.carretera)}" data-pk1="${data.pk1}" data-pk2="${data.pk2}">Usar este tramo</button></div></div>`);
+      setResult(`<div class="viewer-card"><div class="viewer-card-row"><strong>${escapeHtml(title)}</strong><button type="button" class="viewer-copy" aria-label="Copiar medición" data-copy="${escapeHtml(title)}">copiar</button></div><p>Sobre la vía ${escapeHtml(value)}</p><div class="viewer-actions"><button type="button" class="ghost" data-use-tramo data-road="${escapeHtml(data.carretera)}" data-pk1="${data.pk1}" data-pk2="${data.pk2}">Usar este tramo</button><button type="button" class="ghost" data-clear-interaction>Borrar medición</button></div></div>`);
     } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
   }
 
@@ -188,7 +220,7 @@
     if (mode === "measure") {
       if (measurePoints.length === 2) { measureLayer.clearLayers(); measurePoints = []; }
       measurePoints.push(event.latlng);
-      L.circleMarker(event.latlng, { radius: 7, color: "#9d1c25", weight: 2, fillColor: "#fff", fillOpacity: 1 }).bindTooltip(String(measurePoints.length), { permanent: true, direction: "top" }).addTo(measureLayer);
+      drawPoint({ lat: event.latlng.lat, lon: event.latlng.lng }, String(measurePoints.length), "measure");
       if (measurePoints.length === 2) requestMeasure();
       else setResult("<p class=\"viewer-message\">Selecciona el segundo punto.</p>");
     }
@@ -234,8 +266,9 @@
       if (!response.ok) throw new Error(data.detail || "No se pudo cargar la red.");
       if (requestId !== roadsRequestId) return;
       roadsLayer.clearLayers();
-      L.geoJSON(data, { style: (feature) => feature.properties.autovia ? { color: "#2166a5", weight: 5, opacity: 0.62 } : { color: "#47515c", weight: 4.5, opacity: 0.5 }, onEachFeature: (_feature, layer) => layer.setStyle({ lineCap: "round", lineJoin: "round" }) }).addTo(roadsLayer);
-      L.geoJSON(data, { style: (feature) => feature.properties.autovia ? { color: "#2f79b8", weight: 3, opacity: 0.72 } : { color: "#ffffff", weight: 2.1, opacity: 0.7 }, onEachFeature: (_feature, layer) => layer.setStyle({ lineCap: "round", lineJoin: "round" }) }).addTo(roadsLayer);
+      const roadStyle = (pass) => (feature) => ({ ...(feature.properties.autovia ? NETWORK_STYLES.autovia : NETWORK_STYLES.conventional)[pass], lineCap: "round", lineJoin: "round" });
+      L.geoJSON(data, { style: roadStyle("casing") }).addTo(roadsLayer);
+      L.geoJSON(data, { style: roadStyle("interior") }).addTo(roadsLayer);
       setNetworkStatus(data.features?.length ? "" : "No hay vías calibradas visibles en este ámbito.");
     } catch (error) {
       if (error.name === "AbortError" || requestId !== roadsRequestId) return;
