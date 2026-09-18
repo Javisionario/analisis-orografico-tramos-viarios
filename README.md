@@ -106,6 +106,13 @@ El lanzador:
 - detecta cambios en las dependencias mediante SHA-256;
 - vuelve a instalar únicamente cuando el contenido de `requirements.txt` cambia.
 
+El entorno validado actualmente usa Python `3.14`. Las dependencias se organizan así:
+
+- `Desarrollo/requirements.in`: dependencias directas mantenidas por el proyecto.
+- `Desarrollo/requirements.txt`: entorno reproducible con versiones fijadas; es el archivo usado por el lanzador y por CI.
+
+Para regenerar el lock en el futuro, hazlo deliberadamente desde un entorno validado o limpio: actualiza `requirements.in` si cambian dependencias directas, regenera `requirements.txt`, reconstruye un entorno limpio y ejecuta la suite completa.
+
 También puede arrancarse manualmente con:
 
 ```powershell

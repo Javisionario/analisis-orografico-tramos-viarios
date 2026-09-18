@@ -7,15 +7,10 @@ from typing import Any
 
 import geopandas as gpd
 import numpy as np
-import rasterio
-from PIL import Image, ImageColor, ImageDraw
-from rasterio.enums import Resampling
-from rasterio.transform import from_bounds as transform_from_bounds
-from rasterio.warp import reproject, transform_bounds
+from PIL import Image, ImageDraw
 from shapely.geometry import box
 
 from .compositor_cartografico_pil import (
-    MAP_DPI,
     MAP_HEIGHT,
     MAP_INSET,
     MAP_LEGEND_HEADING_STEP_PX,

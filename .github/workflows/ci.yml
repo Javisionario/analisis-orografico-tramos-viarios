@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: Desarrollo/requirements.txt
+      - run: python -m pip install -r Desarrollo/requirements.txt
+      - run: python -m pip check
+      - run: python -m compileall -q Desarrollo/app Desarrollo/tests
+      - run: node --check Desarrollo/app/static/js/app.js
+      - run: python -m unittest discover -s Desarrollo/tests -v
