@@ -24,6 +24,7 @@ from .pendientes import exportar_segmentos, segmentar_pendientes
 from .perfil_grafico import exportar_perfil
 from .perfiles import calcular_halo_perfil, generar_perfil
 from .tramo import TramoError, ajustar_pk_a_rango, extraer_tramo, rango_disponible_sentido
+from .subtramos import analizar_subtramos
 from .utils import ensure_dir, format_pk, json_dump, load_config, method_notes, now_slug, parse_interval, resolve_tool_path, slugify
 
 
@@ -818,6 +819,10 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
         return _generar_outputs_single(params, progress)
     if _bool(params.get("generar_mapa_pendientes"), False) or _bool(params.get("generar_todo"), False):
         raise TramoError("No se pueden generar mapas de pendientes cuando se analizan varios tramos.")
+    subtramos_active = _bool(params.get("agrupar_como_subtramos"), False)
+    subtramos_info = analizar_subtramos([item if isinstance(item, dict) else item.model_dump() for item in requested]) if subtramos_active else {"valido": False}
+    if subtramos_active and not subtramos_info.get("valido"):
+        raise TramoError(str(subtramos_info.get("motivo") or "Los subtramos no son válidos."))
 
     config = load_config()
     _progress(progress, 1, "Preparando los tramos de estudio.")
@@ -832,11 +837,15 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
         "notas_metodologicas": method_notes(), "advertencias": warnings,
         "errores_no_fatales": errors, "tiempos_segundos_por_etapa": timings,
         "fuente_mpl_usada": resolver_fuente_mpl(), "scopes": [], "mdt_por_scope": {},
+        "agrupar_como_subtramos": subtramos_active,
     }
+    if subtramos_active:
+        metadata["subtramos"] = subtramos_info
     files: list[Path] = []
     extracted: list[Any] = []
     combined_pks: list[gpd.GeoDataFrame] = []
     subtitle_entries: list[dict[str, Any]] = []
+    extracted_ids: list[str] = []
     try:
         stage = perf_counter()
         admin = load_admin(config)
@@ -871,7 +880,6 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                 errors.append(message)
                 warnings.append(message)
                 continue
-            subtitle_entries.append({"carretera": road, "pk_inicio": pk_start, "pk_fin": pk_end, "tramo_id": f"T{index:02d}"})
             combined_pks.append(pks)
             directions = ["creciente", "decreciente"] if requested_direction == "ambos" else [requested_direction]
             for direction in directions:
@@ -910,10 +918,19 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                     )
                     scope_meta["tramo_id"] = f"T{index:02d}"
                     scope_meta["indice_tramo"] = index
+                    if subtramos_active:
+                        scope_meta["subtramo"] = True
                     scope_meta["advertencias"] = list(dict.fromkeys(scope_notes + list(scope_warnings)))
                     metadata["mdt_por_scope"][scope_key] = mdt_meta
                     metadata["scopes"].append(scope_meta)
                     extracted.append(tramo)
+                    extracted_ids.append(f"T{index:02d}")
+                    if not any(entry["tramo_id"] == f"T{index:02d}" for entry in subtitle_entries):
+                        subtitle_entries.append({
+                            "tramo_id": f"T{index:02d}", "original_index": index,
+                            "carretera": road, "pk_inicio": pk_start, "pk_fin": pk_end,
+                            "sentido": requested_direction,
+                        })
                     files.extend(scope_files)
                     warnings.extend(scope_warnings)
                 except Exception as exc:
@@ -951,10 +968,13 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                 {"modo": params.get("pk_modo", "automatico"), "simbolo_cada_pk": params.get("pk_simbolo_cada"), "etiqueta_cada_pk": params.get("pk_etiqueta_cada")},
                 subtitle_entries, _bool(params.get("mostrar_anotaciones_curvas_nivel"), True),
                 str(params.get("mapa_base") or config.get("mapas", {}).get("base", "ign_gris")), str(params.get("carto_api_key") or "") or None,
+                subtramos=subtramos_info if subtramos_active else None, tramo_ids=extracted_ids,
             )
             files.extend(map_files)
             warnings.extend(map_warnings + generated_warnings)
             metadata["mapa_localizacion_multitramo"] = map_meta
+        if subtramos_active and (subtramos_info.get("huecos") or subtramos_info.get("solapes")):
+            warnings.append("Hemos detectado huecos o solapes entre los subtramos.")
     except Exception as exc:
         errors.append(str(exc))
         metadata["estado"] = "error"

@@ -250,6 +250,10 @@ function formatPk(value) {
 const segmentList = document.querySelector("#segmentList");
 const addSegmentButton = document.querySelector("#addSegment");
 const multiSegmentWarning = document.querySelector("#multiSegmentWarning");
+const subsegmentsControl = document.querySelector("#subsegmentsControl");
+const subsegmentsCheckbox = document.querySelector("#agruparComoSubtramos");
+const subsegmentsHelp = document.querySelector("#subsegmentsHelp");
+const subsegmentsWarning = document.querySelector("#subsegmentsWarning");
 const pendingMapCheckbox = document.querySelector('[name="generar_mapa_pendientes"]');
 let activeSegmentId = 1;
 let nextSegmentId = 2;
@@ -289,10 +293,46 @@ function updateMultiSegmentMode() {
     pendingMapBeforeMulti = null;
   }
   multiSegmentWarning.hidden = !multi;
+  subsegmentsControl.hidden = !multi;
+  subsegmentsHelp.hidden = !multi;
+  if (!multi && subsegmentsCheckbox) subsegmentsCheckbox.checked = false;
+  updateSubsegmentsState();
   const help = document.querySelector("#pkAutoHelp");
   if (help) help.textContent = multi && document.querySelector("#pkModo")?.value === "automatico"
     ? "Automático: símbolo y etiqueta según longitud de cada tramo."
     : "Automático: símbolo y etiqueta según longitud del tramo.";
+}
+
+function subsegmentsAnalysis() {
+  const items = segments().map((segment) => ({
+    carretera: (segmentRoad(segment)?.carretera || segment.querySelector('[data-role="road"]').value).trim(),
+    sentido: segment.querySelector('[data-role="direction"]').value,
+    inicio: Number(segment.querySelector('[data-role="pk-start"]').value),
+    fin: Number(segment.querySelector('[data-role="pk-end"]').value),
+  }));
+  const roads = new Set(items.map((item) => normalizeRoad(item.carretera)).filter(Boolean));
+  const directions = new Set(items.map((item) => item.sentido));
+  if (roads.size !== 1 || directions.size !== 1) return { valid: false, message: "Los subtramos deben pertenecer a la misma carretera y utilizar el mismo sentido." };
+  let discontinuity = false;
+  const diagnostic = items
+    .map((item, index) => ({ ...item, index: index + 1, low: Math.min(item.inicio, item.fin), high: Math.max(item.inicio, item.fin) }))
+    .filter((item) => Number.isFinite(item.low) && Number.isFinite(item.high))
+    .sort((a, b) => a.low - b.low || a.high - b.high || a.index - b.index);
+  for (let index = 1; index < diagnostic.length; index += 1) {
+    const previous = diagnostic[index - 1]; const current = diagnostic[index];
+    const difference = current.low - previous.high;
+    if (Math.abs(difference) > 0.002) discontinuity = true;
+  }
+  return { valid: true, discontinuity };
+}
+
+function updateSubsegmentsState() {
+  if (!subsegmentsCheckbox || !subsegmentsWarning) return;
+  if (segments().length < 2 || !subsegmentsCheckbox.checked) { subsegmentsWarning.hidden = true; subsegmentsWarning.textContent = ""; return; }
+  const analysis = subsegmentsAnalysis();
+  subsegmentsWarning.hidden = false;
+  subsegmentsWarning.textContent = !analysis.valid ? analysis.message : (analysis.discontinuity ? "Hemos detectado huecos o solapes entre los subtramos." : "");
+  if (analysis.valid && !analysis.discontinuity) subsegmentsWarning.hidden = true;
 }
 
 async function loadRoads() {
@@ -518,16 +558,17 @@ segmentList.addEventListener("pointerdown", (event) => {
 segmentList.addEventListener("input", (event) => {
   const segment = event.target.closest(".segment-block");
   if (!segment) return;
-  if (event.target.matches('[data-role="road"]')) refreshSegmentSuggestions(segment);
+  if (event.target.matches('[data-role="road"]')) { refreshSegmentSuggestions(segment); updateSubsegmentsState(); }
   if (event.target.matches('[data-role="pk-start"], [data-role="pk-end"]')) {
     delete event.target.dataset.viewerRoad;
     updateSmoothHelp();
     updatePkControls();
+    updateSubsegmentsState();
   }
 });
 segmentList.addEventListener("change", (event) => {
   const segment = event.target.closest(".segment-block");
-  if (segment && event.target.matches('[data-role="direction"]')) validateSegmentPk(segment, false);
+  if (segment && event.target.matches('[data-role="direction"]')) { validateSegmentPk(segment, false); updateSubsegmentsState(); }
 });
 segmentList.addEventListener("focusout", (event) => {
   const segment = event.target.closest(".segment-block");
@@ -542,6 +583,7 @@ segmentList.addEventListener("click", (event) => {
   if (event.target.closest('[data-role="remove-segment"]')) removeSegment(segment);
 });
 addSegmentButton.addEventListener("click", addSegment);
+subsegmentsCheckbox?.addEventListener("change", updateSubsegmentsState);
 
 function updateSmoothHelp() {
   const q = Number(smooth.value);
@@ -868,6 +910,7 @@ function payloadFromForm() {
     pk_fin: first.pk_fin,
     sentido: first.sentido,
     ...(tramos.length > 1 ? { tramos } : {}),
+    agrupar_como_subtramos: Boolean(subsegmentsCheckbox?.checked && tramos.length > 1),
     generar_mapa_localizacion: boolField(data, "generar_mapa_localizacion"),
     generar_mapa_pendientes: boolField(data, "generar_mapa_pendientes"),
     generar_perfil: boolField(data, "generar_perfil"),
@@ -1009,7 +1052,7 @@ function renderSummaryCard(data) {
     return `
       <section class="summary-card">
         <div>
-          <h3>Resumen del tramo</h3>
+          <h3>${meta.agrupar_como_subtramos ? `Subtramo ${scope.indice_tramo || ""}` : "Resumen del tramo"}</h3>
           <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
         </div>
         <div class="metrics-grid">
@@ -1172,6 +1215,11 @@ form.addEventListener("submit", async (event) => {
     for (const segment of segments()) {
       await ensureSegmentRoad(segment);
       await validateSegmentPk(segment, true);
+    }
+    if (subsegmentsCheckbox?.checked) {
+      const analysis = subsegmentsAnalysis();
+      updateSubsegmentsState();
+      if (!analysis.valid) throw new Error(analysis.message);
     }
     const response = await fetch("/generar", {
       method: "POST",

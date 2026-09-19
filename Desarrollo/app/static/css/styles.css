@@ -1090,6 +1090,7 @@ select:disabled {
 .viewer-pk-errors { color: #8c3137; }
 .viewer-export { display: grid; gap: 7px; }
 .viewer-export > label { font-size: 12px; }
+.subsegments-control { margin-top: 10px; }
 .road-viewer-map { grid-area: map; min-height: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
 .road-viewer-network-status { grid-area: network; }
 .road-viewer-result { grid-area: result; }

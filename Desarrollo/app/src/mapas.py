@@ -59,6 +59,7 @@ from .utils import as_float, format_pk
 
 STUDY_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 STUDY_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
+SUBTRAMO_INTERIOR_PALETTE = ("#f4a3a8", "#e6858d", "#f2b4b8", "#e6858d")
 SLOPE_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 SLOPE_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
 
@@ -177,13 +178,23 @@ def _draw_round_polyline(draw: ImageDraw.ImageDraw, coords: list[tuple[float, fl
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 
-def _draw_study_line(canvas: Image.Image, geometry: Any, project: Any, clip: tuple[int, int, int, int]) -> None:
+def _draw_study_line(
+    canvas: Image.Image,
+    geometry: Any,
+    project: Any,
+    clip: tuple[int, int, int, int],
+    interior: str = "#f4a3a8",
+    draw_casing: bool = True,
+    draw_interior: bool = True,
+) -> None:
     overlay = Image.new("RGBA", (MAP_WIDTH, MAP_HEIGHT), (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
     for coords in line_coordinate_sequences(geometry):
         projected = [project(lon, lat) for lon, lat, *_ in coords]
-        _draw_round_polyline(draw, projected, "#7f1d1d", STUDY_LINE_WIDTHS_NEW["borde"])
-        _draw_round_polyline(draw, projected, "#f4a3a8", STUDY_LINE_WIDTHS_NEW["centro"])
+        if draw_casing:
+            _draw_round_polyline(draw, projected, "#7f1d1d", STUDY_LINE_WIDTHS_NEW["borde"])
+        if draw_interior:
+            _draw_round_polyline(draw, projected, interior, STUDY_LINE_WIDTHS_NEW["centro"])
     clip_overlay(canvas, overlay, clip)
 
 
@@ -565,6 +576,28 @@ def _subtitle_multitramo(entries: list[dict[str, Any]]) -> list[str]:
     return [" · ".join(roads[:split_at]), " · ".join(roads[split_at:])]
 
 
+def _subtitle_subtramos(entries: list[dict[str, Any]], sentido: str) -> list[str]:
+    if not entries:
+        return []
+    road = str(entries[0].get("carretera") or "")
+    values = [float(value) for item in entries for value in (item["pk_inicio"], item["pk_fin"])]
+    start, end = (max(values), min(values)) if sentido == "decreciente" else (min(values), max(values))
+    return [f"{road} · PK {format_pk(start)} a {format_pk(end)}"]
+
+
+def subtramo_render_specs(entries: list[dict[str, Any]], rendered_ids: list[str]) -> list[dict[str, Any]]:
+    """Keep original subsegment identity after failed scopes are filtered out."""
+    by_id = {str(item.get("tramo_id")): item for item in entries}
+    result: list[dict[str, Any]] = []
+    for identifier in dict.fromkeys(rendered_ids):
+        item = by_id.get(str(identifier))
+        if item is None:
+            continue
+        original_index = int(item.get("original_index") or str(identifier).removeprefix("T") or 0)
+        result.append({**item, "tramo_id": str(identifier), "original_index": original_index, "color": SUBTRAMO_INTERIOR_PALETTE[(original_index - 1) % len(SUBTRAMO_INTERIOR_PALETTE)]})
+    return result
+
+
 def _finish(
     canvas: Image.Image,
     output_base: Path,
@@ -745,6 +778,8 @@ def generar_mapa_localizacion_multitramo(
     mostrar_anotaciones_curvas_nivel: bool = True,
     mapa_base: str = "ign_gris",
     carto_api_key: str | None = None,
+    subtramos: dict[str, Any] | None = None,
+    tramo_ids: list[str] | None = None,
 ) -> tuple[list[Path], dict[str, Any], list[str]]:
     """Mapa único de localización para varios scopes ya extraídos."""
     if not tramos:
@@ -798,8 +833,19 @@ def generar_mapa_localizacion_multitramo(
     timings["elevaciones_curvas"] = round(perf_counter() - stage, 3)
     stage = perf_counter()
     road_segments = _draw_background_roads(canvas, roads, project, MAP_MAIN)
-    for geometry in tramos_geo:
-        _draw_study_line(canvas, geometry, project, MAP_MAIN)
+    subtramos_active = bool(subtramos and subtramos.get("valido"))
+    palette = list(SUBTRAMO_INTERIOR_PALETTE)
+    specs = subtramo_render_specs(subtitle_entries or [], tramo_ids or []) if subtramos_active else []
+    if subtramos_active:
+        for geometry in tramos_geo:
+            _draw_study_line(canvas, geometry, project, MAP_MAIN, draw_interior=False)
+        identifiers = tramo_ids or [f"T{index + 1:02d}" for index in range(len(tramos_geo))]
+        color_by_id = {item["tramo_id"]: item["color"] for item in specs}
+        for geometry, identifier in zip(tramos_geo, identifiers):
+            _draw_study_line(canvas, geometry, project, MAP_MAIN, interior=color_by_id.get(identifier, palette[0]), draw_casing=False)
+    else:
+        for geometry in tramos_geo:
+            _draw_study_line(canvas, geometry, project, MAP_MAIN)
     road_labels_meta = _draw_road_labels(canvas, road_label_specs, project, MAP_MAIN)
     _draw_pks(canvas, unique_items, roads, project, road_segments, MAP_MAIN)
     timings["vias_tramos_pks"] = round(perf_counter() - stage, 3)
@@ -809,8 +855,14 @@ def generar_mapa_localizacion_multitramo(
     timings["inset_mapa_base_admin"] = round(perf_counter() - stage, 3)
     draw_north_arrow(draw)
     draw_scale_bar(draw, bounds)
-    legend_y = draw_left_title(draw, "Mapa de localización", _subtitle_multitramo(subtitle_entries or []))
-    rows = [("Tramos de estudio", "#f4a3a8", "line")]
+    legend_y = draw_left_title(draw, "Mapa de localización", _subtitle_subtramos(specs, str(subtramos.get("sentido"))) if subtramos_active else _subtitle_multitramo(subtitle_entries or []))
+    if subtramos_active:
+        rows = [("Subtramos del tramo de estudio", "", "heading")]
+        for item in specs:
+            label = f"Subtramo {item['original_index']} · PK {format_pk(item['pk_inicio'])}–{format_pk(item['pk_fin'])}" if len(specs) <= 6 else f"Subtramo {item['original_index']}"
+            rows.append((label, item["color"], "line"))
+    else:
+        rows = [("Tramos de estudio", "#f4a3a8", "line")]
     if elevation_meta.get("elevaciones_renderizadas"):
         rows.append(("Elevaciones", "", "heading"))
         rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
@@ -820,6 +872,7 @@ def generar_mapa_localizacion_multitramo(
         {"pks_mapa": configs, "vias_fondo_modo": vias_fondo_modo, "numero_scopes": len(tramos),
          "tramos_estudio": scope_roads, **raster_meta, **elevation_meta, **contour_meta,
          "elevaciones_alpha": float(alpha_elevaciones), "etiquetas_carretera": road_labels_meta,
+         "subtramos": {"activo": subtramos_active, "paleta_interiores": palette if subtramos_active else [], "renderizados": specs},
          "mapa_base": basemap_config}, mapa_base,
     )
 

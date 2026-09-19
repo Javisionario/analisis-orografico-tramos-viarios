@@ -26,6 +26,7 @@ from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
 from src.visor_red import VisorRedError, agrupar_candidatos, bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
 from src.visor_pks import VALID_INTERVALS, csv_text, export_rows, pk_bbox_items, write_gpkg
+from src.subtramos import analizar_subtramos
 
 import geopandas as gpd
 import pyogrio
@@ -72,6 +73,7 @@ class GenerarRequest(BaseModel):
     pk_fin: float | None = None
     sentido: str = "creciente"
     tramos: list[TramoRequest] | None = None
+    agrupar_como_subtramos: bool = False
     pintar_pks: bool = True
     pk_modo: str = "automatico"
     pk_simbolo_cada: int | None = None
@@ -479,6 +481,10 @@ def generar(payload: GenerarRequest) -> JSONResponse:
     if payload.mapa_base not in {"ign_gris", "carto_positron"}:
         raise HTTPException(status_code=422, detail="Mapa base no valido.")
     tramos = payload.tramos or []
+    if payload.agrupar_como_subtramos:
+        analysis = analizar_subtramos([item.model_dump() for item in tramos])
+        if not analysis["valido"]:
+            raise HTTPException(status_code=422, detail=analysis["motivo"])
     if len(tramos) > 1 and (payload.generar_mapa_pendientes or payload.generar_todo):
         raise HTTPException(
             status_code=422,
