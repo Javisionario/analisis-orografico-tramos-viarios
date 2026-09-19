@@ -95,6 +95,7 @@ def detect_columns(gdf: gpd.GeoDataFrame, config: dict[str, Any], pk: bool = Fal
             "pk": choose_column(columns, campos.get("pk_punto", [])),
             "label": choose_column(columns, campos.get("etiqueta_pk", [])),
             "z": choose_column(columns, campos.get("cota_pk", [])),
+            "rotacion": choose_column(columns, campos.get("rotacion_pks", [])),
         }
     return {
         "carretera": choose_column(columns, campos.get("carretera_lineas", [])),
@@ -242,6 +243,14 @@ def load_lineas_bbox(config: dict[str, Any], bbox: tuple[float, float, float, fl
     layer = line_layer(config)
     gdf, notes = read_layer_bbox(path, layer, bbox=bbox)
     return gdf, detect_columns(gdf, config, pk=False), notes
+
+
+def load_pks_bbox(config: dict[str, Any], bbox: tuple[float, float, float, float]) -> tuple[gpd.GeoDataFrame, dict[str, str | None], list[str]]:
+    """Read only PK points intersecting a source-CRS bounding box."""
+    path = viario_path(config)
+    layer = pk_layer(config)
+    gdf, notes = read_layer_bbox(path, layer, bbox=bbox)
+    return gdf, detect_columns(gdf, config, pk=True), notes
 
 
 def load_admin(config: dict[str, Any]) -> tuple[gpd.GeoDataFrame | None, gpd.GeoDataFrame | None, list[str]]:

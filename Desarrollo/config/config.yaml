@@ -24,6 +24,7 @@ campos:
   m_fin: ["m_to", "pk_fin"]
   pk_punto: ["VALORKM", "VALORM"]
   etiqueta_pk: ["LABEL", "PK+000", "VALORKM"]
+  rotacion_pks: ["rot", "ROT", "rotation", "rotacion", "angle", "angulo"]
   cota_pk: ["COORD_Z"]
   tipo_via: ["Tipo_via"]
 

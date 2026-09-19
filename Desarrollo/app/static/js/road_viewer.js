@@ -39,6 +39,7 @@
   let invalidBoundsRetries = 0;
   let noticeTimer = null;
   let hasResults = false;
+  let pkTools = null;
 
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
   const pkText = (pk) => {
@@ -145,6 +146,7 @@
   }
 
   function showLocateForm() {
+    if (pkTools) { pkTools.showLocateForm(); return; }
     clearInteraction();
     formElement.innerHTML = `<form id="viewerLocateForm" class="viewer-inline-form"><label>Carretera <input id="viewerRoad" list="viewerRoadOptions" required autocomplete="off"><span id="viewerRoadRange" class="field-message"></span></label><datalist id="viewerRoadOptions"></datalist><label>PK <input id="viewerPk" type="number" min="0" step="0.001" required></label><button class="ghost" type="submit">Localizar</button></form>`;
     setResult("<p class=\"viewer-message\">Introduce una carretera y un PK para localizarlo.</p>");
@@ -196,11 +198,11 @@
     setResult("<p class=\"viewer-message\">Selecciona dos puntos sobre la misma carretera.</p>");
   }
 
-  function drawPoint(point, label, tool) {
+  function drawPoint(point, label, tool, targetLayer = measureLayer) {
     const style = INTERACTION_STYLES[tool];
     L.circleMarker([point.lat, point.lon], { pane: "roadInteractionPane", radius: 7, color: style.color, weight: 2, fillColor: style.fillColor, fillOpacity: 1 })
       .bindTooltip(label, { permanent: true, direction: "top", offset: [0, -11], className: `viewer-marker-tooltip ${tool}` })
-      .addTo(measureLayer);
+      .addTo(targetLayer);
   }
 
   async function identify(latlng) {
@@ -212,10 +214,10 @@
       if (data.estado === "ambiguo") {
         setResult(`<div class="viewer-card"><p>Hay varias vías posibles:</p>${data.opciones.map((item) => `<button class="ghost" type="button" data-identify-option="${escapeHtml(JSON.stringify(item))}">${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</button>`).join(" ")}</div>`);
         resultElement.querySelectorAll("[data-identify-option]").forEach((button) => button.addEventListener("click", () => {
-          const item = JSON.parse(button.dataset.identifyOption); clearInteractionGraphics(); drawPoint(item.punto, roadPkLabel(item), "identify"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
+          const item = JSON.parse(button.dataset.identifyOption); clearInteractionGraphics(); drawPoint(item.punto, roadPkLabel(item), "identify"); pkTools?.addHistory(item); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
         }));
       } else {
-        const item = data.opciones[0]; drawPoint(item.punto, roadPkLabel(item), "identify"); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
+        const item = data.opciones[0]; drawPoint(item.punto, roadPkLabel(item), "identify"); pkTools?.addHistory(item); setResult(`<div data-road="${escapeHtml(item.carretera)}">${resultCard(item)}</div>`);
       }
     } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
   }
@@ -320,6 +322,7 @@
     map.invalidateSize({ pan: false });
     map.setView([point.lat, point.lng], Math.max(Number(map.getZoom()) || 0, 15));
     scheduleRoadLoad();
+    pkTools?.scheduleLoad();
   }
 
   function validBounds(bounds) {
@@ -353,17 +356,22 @@
     grey.addTo(map);
     map.setView([40.2, -3.7], 6);
     map.createPane("roadNetworkPane").style.zIndex = 410;
+    map.createPane("roadPkPane").style.zIndex = 440;
+    map.createPane("roadPkLabelPane").style.zIndex = 445;
     map.createPane("roadInteractionPane").style.zIndex = 460;
     roadsLayer = L.layerGroup().addTo(map);
     measureLayer = L.layerGroup().addTo(map);
+    pkTools = window.createRoadPkTools?.({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, usePk: async (road, pk, target) => window.setRoadFromViewer?.(road, target === "inicio" ? pk : null, target === "fin" ? pk : null), showNotice: showViewerNotice }) || null;
     L.control.layers({ "Callejero gris": grey, Ortofoto: photo }, { "Red calibrada": roadsLayer }, { collapsed: true }).addTo(map);
-    map.on("moveend", scheduleRoadLoad);
+    map.on("moveend", () => { scheduleRoadLoad(); pkTools?.scheduleLoad(); });
     map.on("click", onMapClick);
     document.querySelectorAll("[data-viewer-tool]").forEach((button) => button.addEventListener("click", () => {
       if (button.dataset.viewerTool === "locate") showLocateForm();
       if (button.dataset.viewerTool === "identify") activateIdentify();
       if (button.dataset.viewerTool === "measure") activateMeasure();
+      if (button.dataset.viewerTool === "pks") pkTools?.togglePanel();
     }));
+    document.querySelector("#viewerExportButton")?.addEventListener("click", () => pkTools?.showExport());
     setNetworkStatus("Acércate para mostrar la red calibrada.");
     if (window.ResizeObserver) new ResizeObserver(invalidateMapSize).observe(mapElement);
     else window.addEventListener("resize", invalidateMapSize);

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import os
 from pathlib import Path
+import tempfile
 from threading import Lock
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -19,10 +21,11 @@ from starlette.requests import Request
 from src import APP_VERSION
 from src.exportacion import generar_outputs
 from src.credenciales import eliminar_api_key_carto, guardar_api_key_carto, obtener_api_key_carto
-from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, resolve_road_name, viario_path
+from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, load_pks_bbox, resolve_road_name, viario_path
 from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
 from src.visor_red import VisorRedError, agrupar_candidatos, bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
+from src.visor_pks import VALID_INTERVALS, csv_text, export_rows, pk_bbox_items, write_gpkg
 
 import geopandas as gpd
 import pyogrio
@@ -124,6 +127,27 @@ class MedirVisorRequest(BaseModel):
     p2: PuntoVisorRequest
     tolerance_m: float
     carretera: str | None = None
+
+
+class LocalizarPuntoPkRequest(BaseModel):
+    carretera: str
+    pk: float
+
+
+class LocalizarPksRequest(BaseModel):
+    puntos: list[LocalizarPuntoPkRequest]
+
+
+class ExportarPuntoPkRequest(BaseModel):
+    carretera: str
+    pk: float
+    longitud: float
+    latitud: float
+
+
+class ExportarPksRequest(BaseModel):
+    puntos: list[ExportarPuntoPkRequest]
+    formato: str
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -275,6 +299,44 @@ def visor_vias(bbox: str = Query(...)) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
+def _parse_viewer_bbox(value: str) -> tuple[float, float, float, float]:
+    values = tuple(float(item) for item in value.split(","))
+    if len(values) != 4 or values[0] >= values[2] or values[1] >= values[3]:
+        raise ValueError("BBOX no válido.")
+    west, south, east, north = values
+    if not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= 90 and -90 <= north <= 90):
+        raise ValueError("BBOX fuera de WGS84.")
+    # A leaf-map request should remain local. This protects the 204k-point layer.
+    if (east - west) * (north - south) > 4.0:
+        raise ValueError("BBOX demasiado amplio para los PK visibles.")
+    return values
+
+
+@app.get("/api/visor/pks")
+def visor_pks(
+    bbox: str = Query(...),
+    carreteras: str = Query(...),
+    intervalo: int = Query(...),
+) -> dict[str, Any]:
+    if intervalo not in VALID_INTERVALS:
+        raise HTTPException(status_code=422, detail="Intervalo PK no válido.")
+    roads = [item.strip() for item in carreteras.split(";") if item.strip()]
+    if not roads:
+        raise HTTPException(status_code=422, detail="Debe seleccionar al menos una carretera.")
+    if len(roads) > 30:
+        raise HTTPException(status_code=422, detail="Demasiadas carreteras seleccionadas.")
+    try:
+        config = load_config()
+        source_bbox = _bbox_en_capa(config, _parse_viewer_bbox(bbox))
+        pks, cols, _notes = load_pks_bbox(config, source_bbox)
+        lineas, _line_cols, _line_notes = load_lineas_bbox(config, source_bbox)
+        return {"items": pk_bbox_items(pks, cols, lineas, roads, intervalo), "intervalo": intervalo}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
 @app.get("/api/visor/localizar-pk")
 def visor_localizar_pk(carretera: str = Query(...), pk: float = Query(...)) -> dict[str, Any]:
     config = load_config()
@@ -287,6 +349,73 @@ def visor_localizar_pk(carretera: str = Query(...), pk: float = Query(...)) -> d
         return {"carretera": result.carretera, "pk": result.pk, "punto": punto_wgs84(result.snapped, result.crs)}
     except VisorRedError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@app.post("/api/visor/localizar-pks")
+def visor_localizar_pks(payload: LocalizarPksRequest) -> dict[str, Any]:
+    if not payload.puntos:
+        raise HTTPException(status_code=422, detail="Debe indicar al menos un PK.")
+    if len(payload.puntos) > 250:
+        raise HTTPException(status_code=422, detail="El lote de PKs supera el máximo de 250 puntos.")
+    config = load_config()
+    grouped: dict[str, list[tuple[int, float]]] = {}
+    errors: dict[int, str] = {}
+    for index, point in enumerate(payload.puntos):
+        if not -1e-9 <= point.pk <= 2000:
+            errors[index] = "PK fuera de rango."
+            continue
+        road = resolve_road_name(config, point.carretera)
+        if not road:
+            errors[index] = "Carretera no encontrada."
+            continue
+        grouped.setdefault(road, []).append((index, point.pk))
+    results: list[dict[str, Any]] = [{"indice": index, "error": errors[index]} if index in errors else {"indice": index} for index in range(len(payload.puntos))]
+    for road, requests in grouped.items():
+        try:
+            lineas, cols, _notes = load_lineas(config, road)  # exactly once per resolved road
+            for index, pk in requests:
+                try:
+                    item = localizar_pk(lineas, cols, road, pk)
+                    results[index] = {"indice": index, "carretera": item.carretera, "pk": item.pk, "punto": punto_wgs84(item.snapped, item.crs)}
+                except VisorRedError as exc:
+                    results[index] = {"indice": index, "error": str(exc)}
+        except Exception as exc:
+            for index, _pk in requests:
+                results[index] = {"indice": index, "error": str(exc)}
+    return {"resultados": results}
+
+
+def _remove_tempfile(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+@app.post("/api/visor/exportar-pks")
+def visor_exportar_pks(payload: ExportarPksRequest, background_tasks: BackgroundTasks):
+    formato = str(payload.formato or "").lower()
+    if formato not in {"csv", "gpkg"}:
+        raise HTTPException(status_code=422, detail="Formato de exportación no válido.")
+    try:
+        rows = export_rows([item.model_dump() for item in payload.puntos])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if not rows:
+        raise HTTPException(status_code=422, detail="Debe seleccionar al menos un punto.")
+    if formato == "csv":
+        return PlainTextResponse(csv_text(rows), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="pks.csv"'})
+    # Keep short-lived exports inside the application workspace: desktop sandbox
+    # profiles can deny GDAL access to the system temporary directory.
+    handle = tempfile.NamedTemporaryFile(prefix="visor_pks_", suffix=".gpkg", dir=ROOT, delete=False)
+    handle.close()
+    try:
+        write_gpkg(rows, Path(handle.name))
+    except Exception as exc:
+        _remove_tempfile(handle.name)
+        raise HTTPException(status_code=503, detail=f"No se pudo generar GPKG: {exc}") from None
+    background_tasks.add_task(_remove_tempfile, handle.name)
+    return FileResponse(handle.name, media_type="application/geopackage+sqlite3", filename="pks.gpkg", background=background_tasks)
 
 
 @app.post("/api/visor/identificar")
