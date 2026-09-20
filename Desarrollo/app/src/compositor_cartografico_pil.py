@@ -479,6 +479,12 @@ def draw_legend_rows(
             continue
         if style == "line":
             draw.rectangle((loc_x + 34, y - 22, loc_x + 100, y + 6), fill=color, outline="#7f1d1d", width=3)
+        elif style == "divided_line":
+            left, top, right, bottom = loc_x + 34, y - 22, loc_x + 100, y + 6
+            middle = (left + right) // 2
+            draw.rectangle((left, top, middle, bottom), fill="#f4a3a8")
+            draw.rectangle((middle, top, right, bottom), fill="#df7f87")
+            draw.rectangle((left, top, right, bottom), outline="#7f1d1d", width=3)
         elif style == "slope":
             draw.rectangle((loc_x + 34, y - 28, loc_x + 100, y + 12), fill=color, outline="#ffffff", width=2)
         else:

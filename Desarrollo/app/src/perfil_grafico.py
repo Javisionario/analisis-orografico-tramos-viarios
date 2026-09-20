@@ -79,6 +79,7 @@ def exportar_perfil(
     tramo: TramoExtraido,
     modo_eje_y: str = "cero",
     mostrar_linea_muestreada_elevaciones: bool = False,
+    divisiones: list[dict[str, Any]] | None = None,
 ) -> list[Path]:
     paths = [
         output_base.with_suffix(".png"),
@@ -98,7 +99,14 @@ def exportar_perfil(
     y_axis = _elevation_axis(z, modo_eje_y)
     zmin = float(y_axis["y_min_visual"])
 
-    ax.fill_between(x, z, zmin, color="#7cad83", alpha=0.32, linewidth=0)
+    parts = list(divisiones or [])
+    if len(parts) > 1:
+        for part in parts:
+            low, high = sorted((float(part["pk_inicio"]), float(part["pk_fin"])))
+            mask = (x >= low) & (x <= high)
+            ax.fill_between(x, z, zmin, where=mask, interpolate=True, color=("#7cad83" if int(part["indice"]) % 2 else "#5f956d"), alpha=0.32, linewidth=0)
+    else:
+        ax.fill_between(x, z, zmin, color="#7cad83", alpha=0.32, linewidth=0)
     ax.plot(x, z, color="#255f3c", linewidth=2.0, zorder=3)
     if mostrar_linea_muestreada_elevaciones:
         ax.plot(x, raw, color="#6f8f77", linewidth=0.7, alpha=0.42, zorder=2)

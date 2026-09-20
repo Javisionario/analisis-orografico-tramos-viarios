@@ -250,10 +250,6 @@ function formatPk(value) {
 const segmentList = document.querySelector("#segmentList");
 const addSegmentButton = document.querySelector("#addSegment");
 const multiSegmentWarning = document.querySelector("#multiSegmentWarning");
-const subsegmentsControl = document.querySelector("#subsegmentsControl");
-const subsegmentsCheckbox = document.querySelector("#agruparComoSubtramos");
-const subsegmentsHelp = document.querySelector("#subsegmentsHelp");
-const subsegmentsWarning = document.querySelector("#subsegmentsWarning");
 const pendingMapCheckbox = document.querySelector('[name="generar_mapa_pendientes"]');
 let activeSegmentId = 1;
 let nextSegmentId = 2;
@@ -293,46 +289,41 @@ function updateMultiSegmentMode() {
     pendingMapBeforeMulti = null;
   }
   multiSegmentWarning.hidden = !multi;
-  subsegmentsControl.hidden = !multi;
-  subsegmentsHelp.hidden = !multi;
-  if (!multi && subsegmentsCheckbox) subsegmentsCheckbox.checked = false;
-  updateSubsegmentsState();
   const help = document.querySelector("#pkAutoHelp");
   if (help) help.textContent = multi && document.querySelector("#pkModo")?.value === "automatico"
     ? "Automático: símbolo y etiqueta según longitud de cada tramo."
     : "Automático: símbolo y etiqueta según longitud del tramo.";
 }
 
-function subsegmentsAnalysis() {
-  const items = segments().map((segment) => ({
-    carretera: (segmentRoad(segment)?.carretera || segment.querySelector('[data-role="road"]').value).trim(),
-    sentido: segment.querySelector('[data-role="direction"]').value,
-    inicio: Number(segment.querySelector('[data-role="pk-start"]').value),
-    fin: Number(segment.querySelector('[data-role="pk-end"]').value),
-  }));
-  const roads = new Set(items.map((item) => normalizeRoad(item.carretera)).filter(Boolean));
-  const directions = new Set(items.map((item) => item.sentido));
-  if (roads.size !== 1 || directions.size !== 1) return { valid: false, message: "Los subtramos deben pertenecer a la misma carretera y utilizar el mismo sentido." };
-  let discontinuity = false;
-  const diagnostic = items
-    .map((item, index) => ({ ...item, index: index + 1, low: Math.min(item.inicio, item.fin), high: Math.max(item.inicio, item.fin) }))
-    .filter((item) => Number.isFinite(item.low) && Number.isFinite(item.high))
-    .sort((a, b) => a.low - b.low || a.high - b.high || a.index - b.index);
-  for (let index = 1; index < diagnostic.length; index += 1) {
-    const previous = diagnostic[index - 1]; const current = diagnostic[index];
-    const difference = current.low - previous.high;
-    if (Math.abs(difference) > 0.002) discontinuity = true;
-  }
-  return { valid: true, discontinuity };
+function parseDivisionPk(value) {
+  const text = String(value ?? "").trim().replace(",", ".");
+  if (!text) return null;
+  const station = text.match(/^(\d+)\+(\d{1,3})$/);
+  if (station) return Number(station[1]) + Number(station[2].padEnd(3, "0")) / 1000;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function updateSubsegmentsState() {
-  if (!subsegmentsCheckbox || !subsegmentsWarning) return;
-  if (segments().length < 2 || !subsegmentsCheckbox.checked) { subsegmentsWarning.hidden = true; subsegmentsWarning.textContent = ""; return; }
-  const analysis = subsegmentsAnalysis();
-  subsegmentsWarning.hidden = false;
-  subsegmentsWarning.textContent = !analysis.valid ? analysis.message : (analysis.discontinuity ? "Hemos detectado huecos o solapes entre los subtramos." : "");
-  if (analysis.valid && !analysis.discontinuity) subsegmentsWarning.hidden = true;
+function divisionValues(segment, report = true) {
+  const start = numberOrNull(segment.querySelector('[data-role="pk-start"]')?.value);
+  const end = numberOrNull(segment.querySelector('[data-role="pk-end"]')?.value);
+  const values = [...segment.querySelectorAll('[data-role="division-pk"]')].map((field) => parseDivisionPk(field.value));
+  const problems = [];
+  if (values.some((value) => value === null)) problems.push("Cada división debe usar un PK válido, por ejemplo 15+000.");
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    const low = Math.min(start, end); const high = Math.max(start, end);
+    if (values.some((value) => value !== null && (value <= low + 0.002 || value >= high - 0.002))) problems.push("Las divisiones deben quedar estrictamente dentro del tramo.");
+    const ordered = values.filter((value) => value !== null).sort((a, b) => a - b);
+    if (ordered.some((value, index) => index && value - ordered[index - 1] <= 0.002)) problems.push("No puede haber divisiones duplicadas o separadas menos de 2 m.");
+  }
+  const box = segment.querySelector('[data-role="division-warnings"]');
+  if (report && box) { box.hidden = !problems.length; box.innerHTML = problems.map((item) => `<p>${item}</p>`).join(""); }
+  if (problems.length) throw new Error(problems[0]);
+  return values.filter((value) => value !== null);
+}
+
+function divisionRowMarkup() {
+  return `<div class="division-row"><label><span>División PK</span><input data-role="division-pk" type="text" inputmode="decimal" placeholder="15+000"></label><button class="ghost" data-role="remove-division" type="button" aria-label="Eliminar división">×</button></div>`;
 }
 
 async function loadRoads() {
@@ -523,6 +514,7 @@ function segmentMarkup(id) {
       <label><span>Sentido</span><select data-role="direction"><option value="creciente">Creciente</option><option value="decreciente">Decreciente</option><option value="ambos">Ambos</option></select></label>
       <div class="grid two"><label><span>PK inicio</span><input data-role="pk-start" type="number" step="0.001" placeholder="1.000" required></label><label><span>PK fin</span><input data-role="pk-end" type="number" step="0.001" placeholder="6.000" required></label></div>
       <div data-role="pk-warnings" class="warnings" hidden></div>
+      <div class="segment-divisions" data-role="divisions"><p class="field-message">Divide visualmente este mismo recorrido sin crear otro análisis.</p><div data-role="division-list"></div><button class="ghost division-add" data-role="add-division" type="button">+ Añadir división</button><div data-role="division-warnings" class="warnings" hidden></div></div>
     </section>`;
 }
 
@@ -558,17 +550,18 @@ segmentList.addEventListener("pointerdown", (event) => {
 segmentList.addEventListener("input", (event) => {
   const segment = event.target.closest(".segment-block");
   if (!segment) return;
-  if (event.target.matches('[data-role="road"]')) { refreshSegmentSuggestions(segment); updateSubsegmentsState(); }
+  if (event.target.matches('[data-role="road"]')) refreshSegmentSuggestions(segment);
   if (event.target.matches('[data-role="pk-start"], [data-role="pk-end"]')) {
     delete event.target.dataset.viewerRoad;
     updateSmoothHelp();
     updatePkControls();
-    updateSubsegmentsState();
+    try { divisionValues(segment); } catch (_) { /* se muestra el aviso junto al tramo */ }
   }
+  if (event.target.matches('[data-role="division-pk"]')) { try { divisionValues(segment); } catch (_) { /* aviso ya renderizado */ } }
 });
 segmentList.addEventListener("change", (event) => {
   const segment = event.target.closest(".segment-block");
-  if (segment && event.target.matches('[data-role="direction"]')) { validateSegmentPk(segment, false); updateSubsegmentsState(); }
+  if (segment && event.target.matches('[data-role="direction"]')) validateSegmentPk(segment, false);
 });
 segmentList.addEventListener("focusout", (event) => {
   const segment = event.target.closest(".segment-block");
@@ -581,9 +574,10 @@ segmentList.addEventListener("click", (event) => {
   if (!segment) return;
   if (event.target.closest('[data-role="clear-road"]')) clearSegmentRoad(segment);
   if (event.target.closest('[data-role="remove-segment"]')) removeSegment(segment);
+  if (event.target.closest('[data-role="add-division"]')) segment.querySelector('[data-role="division-list"]').insertAdjacentHTML("beforeend", divisionRowMarkup());
+  if (event.target.closest('[data-role="remove-division"]')) { event.target.closest(".division-row")?.remove(); try { divisionValues(segment); } catch (_) { /* aviso ya renderizado */ } }
 });
 addSegmentButton.addEventListener("click", addSegment);
-subsegmentsCheckbox?.addEventListener("change", updateSubsegmentsState);
 
 function updateSmoothHelp() {
   const q = Number(smooth.value);
@@ -896,6 +890,7 @@ function payloadFromForm() {
       pk_inicio: Number(segment.querySelector('[data-role="pk-start"]').value),
       pk_fin: Number(segment.querySelector('[data-role="pk-end"]').value),
       sentido: segment.querySelector('[data-role="direction"]').value || "creciente",
+      divisiones_pk: divisionValues(segment),
     };
   });
   const first = tramos[0];
@@ -909,8 +904,7 @@ function payloadFromForm() {
     pk_inicio: first.pk_inicio,
     pk_fin: first.pk_fin,
     sentido: first.sentido,
-    ...(tramos.length > 1 ? { tramos } : {}),
-    agrupar_como_subtramos: Boolean(subsegmentsCheckbox?.checked && tramos.length > 1),
+    ...(tramos.length > 1 || first.divisiones_pk.length ? { tramos } : {}),
     generar_mapa_localizacion: boolField(data, "generar_mapa_localizacion"),
     generar_mapa_pendientes: boolField(data, "generar_mapa_pendientes"),
     generar_perfil: boolField(data, "generar_perfil"),
@@ -1052,7 +1046,7 @@ function renderSummaryCard(data) {
     return `
       <section class="summary-card">
         <div>
-          <h3>${meta.agrupar_como_subtramos ? `Subtramo ${scope.indice_tramo || ""}` : "Resumen del tramo"}</h3>
+          <h3>Resumen del tramo</h3>
           <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
         </div>
         <div class="metrics-grid">
@@ -1215,11 +1209,7 @@ form.addEventListener("submit", async (event) => {
     for (const segment of segments()) {
       await ensureSegmentRoad(segment);
       await validateSegmentPk(segment, true);
-    }
-    if (subsegmentsCheckbox?.checked) {
-      const analysis = subsegmentsAnalysis();
-      updateSubsegmentsState();
-      if (!analysis.valid) throw new Error(analysis.message);
+      divisionValues(segment);
     }
     const response = await fetch("/generar", {
       method: "POST",

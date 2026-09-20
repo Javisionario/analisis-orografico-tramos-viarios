@@ -24,7 +24,7 @@ from .pendientes import exportar_segmentos, segmentar_pendientes
 from .perfil_grafico import exportar_perfil
 from .perfiles import calcular_halo_perfil, generar_perfil
 from .tramo import TramoError, ajustar_pk_a_rango, extraer_tramo, rango_disponible_sentido
-from .subtramos import analizar_subtramos
+from .subtramos import DivisionError, derivar_subtramos, normalizar_divisiones
 from .utils import ensure_dir, format_pk, json_dump, load_config, method_notes, now_slug, parse_interval, resolve_tool_path, slugify
 
 
@@ -40,9 +40,19 @@ def _float_or_none(value: Any) -> float | None:
     return parse_interval(value)
 
 
+def _division_parts(tramo: Any, lineas: Any, cols: Any, pks: Any, pk_cols: Any, divisiones: list[dict[str, Any]]) -> list[Any]:
+    """Extrae geometrías de presentación; no inicia scopes ni usa MDT."""
+    if len(divisiones) <= 1:
+        return []
+    parts: list[Any] = []
+    for item in divisiones:
+        parts.append(extraer_tramo(lineas, cols, tramo.carretera, item["pk_inicio"], item["pk_fin"], tramo.sentido, pks, pk_cols))
+    return parts
+
+
 def _metadata_params(params: dict[str, Any]) -> dict[str, Any]:
     """Devuelve los parámetros aptos para resultados y metadatos persistentes."""
-    return {key: value for key, value in params.items() if key != "carto_api_key"}
+    return {key: value for key, value in params.items() if key not in {"carto_api_key", "agrupar_como_subtramos"} and not key.startswith("_")}
 
 
 def _mark(timings: dict[str, float], name: str, start: float) -> None:
@@ -346,6 +356,7 @@ def _run_scope(
             int(params.get("sg_pendientes_polyorder_slider_visual")) if params.get("sg_pendientes_polyorder_slider_visual") not in (None, "") else None,
             tramo_calculo=params.get("_tramo_calculo_perfil"),
             halo_puntos=params.get("_halo_perfil_puntos"),
+            divisiones=params.get("_divisiones_derivadas"),
         )
         perfil_meta["mostrar_linea_muestreada_elevaciones"] = _bool(params.get("mostrar_linea_muestreada_elevaciones"), False)
         warnings.extend(perfil_warnings)
@@ -376,6 +387,7 @@ def _run_scope(
             tramo,
             str(params.get("modo_eje_y", "cero")),
             _bool(params.get("mostrar_linea_muestreada_elevaciones"), False),
+            params.get("_divisiones_derivadas"),
         )
         perfil_sin = exportar_perfil(
             perfil,
@@ -384,6 +396,7 @@ def _run_scope(
             tramo,
             str(params.get("modo_eje_y", "cero")),
             _bool(params.get("mostrar_linea_muestreada_elevaciones"), False),
+            params.get("_divisiones_derivadas"),
         )
         files.extend(perfil_con)
         files.extend(perfil_sin)
@@ -436,6 +449,7 @@ def _run_scope(
             mapa_base,
             carto_api_key,
             raster_cache=raster_cache,
+            subtramos_geometrias=params.get("_division_geometries"),
         )
         files.extend(out)
         map_meta["localizacion"] = meta
@@ -534,6 +548,7 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
         "tiempos_segundos_por_etapa": timings,
         "fuente_mpl_usada": resolver_fuente_mpl(),
         "scopes": [],
+        "tramos": [],
     }
     files: list[Path] = []
     try:
@@ -544,6 +559,13 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
         pk_inicio = float(params.get("pk_inicio"))
         pk_fin = float(params.get("pk_fin"))
         sentido_solicitado = str(params.get("sentido", "creciente")).strip().lower()
+        requested_divisions = list(params.get("divisiones_pk") or [])
+        metadata["tramos"].append({
+            "indice": 1, "carretera": carretera, "pk_inicio": pk_inicio, "pk_fin": pk_fin, "sentido": sentido_solicitado,
+            "divisiones_pk_originales": requested_divisions,
+            "divisiones_pk_normalizadas": normalizar_divisiones(pk_inicio, pk_fin, requested_divisions, sentido_solicitado),
+            "subtramos_derivados": derivar_subtramos(pk_inicio, pk_fin, requested_divisions, sentido_solicitado),
+        })
         sentidos = ["creciente", "decreciente"] if sentido_solicitado == "ambos" else [sentido_solicitado]
         metadata["sentido_solicitado"] = sentido_solicitado
         metadata["sentidos_generados"] = []
@@ -592,6 +614,9 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
                 params_scope["pk_fin_ajustado"] = pk_fin_ajustado
                 params_scope["_include_sentido_suffix"] = sentido_solicitado == "ambos"
                 tramo = extraer_tramo(lineas, cols_lineas, carretera, pk_inicio_ajustado, pk_fin_ajustado, sentido_item, pks, pk_cols)
+                divisiones = derivar_subtramos(tramo.pk_inicio_recorrido, tramo.pk_fin_recorrido, params.get("divisiones_pk"), sentido_item)
+                params_scope["_divisiones_derivadas"] = divisiones
+                params_scope["_division_geometries"] = _division_parts(tramo, lineas, cols_lineas, pks, pk_cols, divisiones)
                 warnings.extend(tramo.advertencias)
                 _mark(timings, f"extraccion_tramo_{sentido_item}", stage)
                 intervalo_perfil = _float_or_none(params.get("intervalo_muestreo_m"))
@@ -709,6 +734,9 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
                 )
                 files.extend(scope_files)
                 warnings.extend(scope_warnings)
+                scope_meta["divisiones_pk_originales"] = list(params.get("divisiones_pk") or [])
+                scope_meta["divisiones_pk_normalizadas"] = [item["pk_inicio"] for item in divisiones[:-1]]
+                scope_meta["subtramos_derivados"] = divisiones
                 metadata["scopes"].append(scope_meta)
                 metadata["sentidos_generados"].append(sentido_item)
                 metadata.setdefault("altimetria_por_sentido", {})[sentido_item] = scope_meta.get("altimetria", {})
@@ -819,11 +847,6 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
         return _generar_outputs_single(params, progress)
     if _bool(params.get("generar_mapa_pendientes"), False) or _bool(params.get("generar_todo"), False):
         raise TramoError("No se pueden generar mapas de pendientes cuando se analizan varios tramos.")
-    subtramos_active = _bool(params.get("agrupar_como_subtramos"), False)
-    subtramos_info = analizar_subtramos([item if isinstance(item, dict) else item.model_dump() for item in requested]) if subtramos_active else {"valido": False}
-    if subtramos_active and not subtramos_info.get("valido"):
-        raise TramoError(str(subtramos_info.get("motivo") or "Los subtramos no son válidos."))
-
     config = load_config()
     _progress(progress, 1, "Preparando los tramos de estudio.")
     job_dir = _job_dir(params, config)
@@ -836,16 +859,14 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
         "tramos_solicitados": requested, "parametros": metadata_params,
         "notas_metodologicas": method_notes(), "advertencias": warnings,
         "errores_no_fatales": errors, "tiempos_segundos_por_etapa": timings,
-        "fuente_mpl_usada": resolver_fuente_mpl(), "scopes": [], "mdt_por_scope": {},
-        "agrupar_como_subtramos": subtramos_active,
+        "fuente_mpl_usada": resolver_fuente_mpl(), "scopes": [], "mdt_por_scope": {}, "tramos": [],
     }
-    if subtramos_active:
-        metadata["subtramos"] = subtramos_info
     files: list[Path] = []
     extracted: list[Any] = []
     combined_pks: list[gpd.GeoDataFrame] = []
     subtitle_entries: list[dict[str, Any]] = []
     extracted_ids: list[str] = []
+    division_geometry_groups: list[list[Any]] = []
     try:
         stage = perf_counter()
         admin = load_admin(config)
@@ -864,6 +885,15 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                 errors.append(f"Tramo {index} · {road}: PK inválido.")
                 continue
             requested_direction = str(value.get("sentido", "creciente")).strip().lower()
+            try:
+                normalized_for_request = normalizar_divisiones(pk_start, pk_end, value.get("divisiones_pk"), requested_direction)
+                metadata["tramos"].append({"indice": index, "carretera": road, "pk_inicio": pk_start, "pk_fin": pk_end,
+                    "sentido": requested_direction, "divisiones_pk_originales": list(value.get("divisiones_pk") or []),
+                    "divisiones_pk_normalizadas": normalized_for_request,
+                    "subtramos_derivados": derivar_subtramos(pk_start, pk_end, value.get("divisiones_pk"), requested_direction)})
+            except DivisionError as exc:
+                errors.append(f"Tramo {index} · {road}: {exc}")
+                continue
             try:
                 _progress(progress, 2, "Leyendo carretera y PKs.", f"Tramo {index} de {len(requested)} · {road}")
                 lineas, cols, notes = load_lineas(config, road)
@@ -894,6 +924,7 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                     scope_notes.extend(note for note in (warning_start, warning_end) if note)
                     warnings.extend(f"Tramo {index} · {direction}: {note}" for note in (warning_start, warning_end) if note)
                     tramo = extraer_tramo(lineas, cols, road, adjusted_start, adjusted_end, direction, pks, pk_cols)
+                    divisiones = derivar_subtramos(tramo.pk_inicio_recorrido, tramo.pk_fin_recorrido, value.get("divisiones_pk"), direction)
                     scope_notes.extend(tramo.advertencias)
                     warnings.extend(f"Tramo {index} · {direction}: {note}" for note in tramo.advertencias)
                     scope_params = dict(params)
@@ -901,6 +932,8 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                         "carretera": road, "pk_inicio": pk_start, "pk_fin": pk_end, "sentido": direction,
                         "generar_mapa_localizacion": False, "generar_mapa_pendientes": False, "generar_todo": False,
                         "_scope_prefix": f"T{index:02d}", "_include_sentido_suffix": requested_direction == "ambos",
+                        "_divisiones_derivadas": divisiones,
+                        "_division_geometries": _division_parts(tramo, lineas, cols, pks, pk_cols, divisiones),
                     })
                     need_scope_mdt = _bool(scope_params.get("generar_perfil"), True) or _bool(scope_params.get("generar_datos_auxiliares"), False)
                     if need_scope_mdt:
@@ -918,13 +951,15 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                     )
                     scope_meta["tramo_id"] = f"T{index:02d}"
                     scope_meta["indice_tramo"] = index
-                    if subtramos_active:
-                        scope_meta["subtramo"] = True
+                    scope_meta["divisiones_pk_originales"] = list(value.get("divisiones_pk") or [])
+                    scope_meta["divisiones_pk_normalizadas"] = [part["pk_inicio"] for part in divisiones[:-1]]
+                    scope_meta["subtramos_derivados"] = divisiones
                     scope_meta["advertencias"] = list(dict.fromkeys(scope_notes + list(scope_warnings)))
                     metadata["mdt_por_scope"][scope_key] = mdt_meta
                     metadata["scopes"].append(scope_meta)
                     extracted.append(tramo)
                     extracted_ids.append(f"T{index:02d}")
+                    division_geometry_groups.append(scope_params["_division_geometries"])
                     if not any(entry["tramo_id"] == f"T{index:02d}" for entry in subtitle_entries):
                         subtitle_entries.append({
                             "tramo_id": f"T{index:02d}", "original_index": index,
@@ -968,13 +1003,11 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                 {"modo": params.get("pk_modo", "automatico"), "simbolo_cada_pk": params.get("pk_simbolo_cada"), "etiqueta_cada_pk": params.get("pk_etiqueta_cada")},
                 subtitle_entries, _bool(params.get("mostrar_anotaciones_curvas_nivel"), True),
                 str(params.get("mapa_base") or config.get("mapas", {}).get("base", "ign_gris")), str(params.get("carto_api_key") or "") or None,
-                subtramos=subtramos_info if subtramos_active else None, tramo_ids=extracted_ids,
+                division_geometries=division_geometry_groups,
             )
             files.extend(map_files)
             warnings.extend(map_warnings + generated_warnings)
             metadata["mapa_localizacion_multitramo"] = map_meta
-        if subtramos_active and (subtramos_info.get("huecos") or subtramos_info.get("solapes")):
-            warnings.append("Hemos detectado huecos o solapes entre los subtramos.")
     except Exception as exc:
         errors.append(str(exc))
         metadata["estado"] = "error"
@@ -1001,8 +1034,10 @@ def generar_outputs(params: dict[str, Any], progress: Any = None) -> dict[str, A
     if len(tramos) > 1:
         return _generar_outputs_multitramo(params, progress)
     params = dict(params)
-    if len(tramos) == 1 and not params.get("carretera"):
+    if len(tramos) == 1:
         item = tramos[0] if isinstance(tramos[0], dict) else tramos[0].model_dump()
-        params.update({key: item.get(key) for key in ("carretera", "pk_inicio", "pk_fin", "sentido")})
+        # El contrato de un tramo sigue el dispatcher single, pero las
+        # divisiones son parte de ese tramo y no pueden perderse al elevarlo.
+        params.update({key: item.get(key) for key in ("carretera", "pk_inicio", "pk_fin", "sentido", "divisiones_pk")})
     params.setdefault("modo", "single")
     return _generar_outputs_single(params, progress)

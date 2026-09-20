@@ -1,45 +1,55 @@
 from __future__ import annotations
 
-"""Semantic validation and diagnostics for logical subsegments."""
+"""Derivación de divisiones visuales dentro de un tramo real."""
 
+import math
 from typing import Any
 
-from .io_datos import normalize_road_name
-
-
 TOLERANCIA_KM = 0.002
+DIVISION_COLORS = ("#f4a3a8", "#df7f87")
 
 
-def analizar_subtramos(tramos: list[dict[str, Any]], tolerancia_km: float = TOLERANCIA_KM) -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
-    for index, raw in enumerate(tramos, 1):
-        try:
-            inicio, fin = float(raw.get("pk_inicio")), float(raw.get("pk_fin"))
-        except (TypeError, ValueError):
-            return {"valido": False, "motivo": "Los subtramos deben tener PK válidos.", "huecos": [], "solapes": []}
-        items.append({"indice": index, "carretera": str(raw.get("carretera") or "").strip(), "normalizado": normalize_road_name(raw.get("carretera")), "sentido": str(raw.get("sentido") or "creciente").strip().lower(), "pk_inicio": inicio, "pk_fin": fin})
-    if len(items) < 2:
-        return {"valido": False, "motivo": "Se requieren al menos dos subtramos.", "huecos": [], "solapes": []}
-    roads = {item["normalizado"] for item in items}
-    directions = {item["sentido"] for item in items}
-    if not roads or "" in roads or len(roads) != 1 or len(directions) != 1:
-        return {"valido": False, "motivo": "Los subtramos deben pertenecer a la misma carretera y utilizar el mismo sentido.", "huecos": [], "solapes": []}
-    direction = next(iter(directions))
-    gaps: list[dict[str, Any]] = []
-    overlaps: list[dict[str, Any]] = []
-    # Preserve ``items`` in user order for profiles, IDs and metadata. This
-    # copy is deliberately canonical and sorted only for topology diagnosis.
-    diagnostic = sorted(
-        ({**item, "low": min(item["pk_inicio"], item["pk_fin"]), "high": max(item["pk_inicio"], item["pk_fin"])} for item in items),
-        key=lambda item: (item["low"], item["high"], item["indice"]),
-    )
-    for previous, current in zip(diagnostic, diagnostic[1:]):
-        difference = current["low"] - previous["high"]
-        detail = {"entre": [previous["indice"], current["indice"]], "km": round(abs(difference), 6), "desde": previous["high"], "hasta": current["low"]}
-        if difference > tolerancia_km:
-            gaps.append(detail)
-        elif difference < -tolerancia_km:
-            overlaps.append(detail)
-    minimum = min(min(item["pk_inicio"], item["pk_fin"]) for item in items)
-    maximum = max(max(item["pk_inicio"], item["pk_fin"]) for item in items)
-    return {"valido": True, "motivo": "", "carretera": items[0]["carretera"], "sentido": direction, "numero_subtramos": len(items), "pk_global_inicio": maximum if direction == "decreciente" else minimum, "pk_global_fin": minimum if direction == "decreciente" else maximum, "subtramos": items, "huecos": gaps, "solapes": overlaps, "tolerancia_km": tolerancia_km}
+class DivisionError(ValueError):
+    """Una división de PK no es válida para el tramo solicitado."""
+
+
+def _number(value: Any, label: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise DivisionError(f"{label} debe ser numérico.") from exc
+    if not math.isfinite(result):
+        raise DivisionError(f"{label} debe ser finito.")
+    return result
+
+
+def normalizar_divisiones(pk_inicio: Any, pk_fin: Any, divisiones_pk: list[Any] | None,
+                          sentido: str = "creciente", tolerancia_km: float = TOLERANCIA_KM) -> list[float]:
+    """Valida y ordena las divisiones en el sentido del recorrido."""
+    inicio, fin = _number(pk_inicio, "PK inicio"), _number(pk_fin, "PK fin")
+    low, high = min(inicio, fin), max(inicio, fin)
+    if high - low <= tolerancia_km:
+        raise DivisionError("El tramo debe tener una longitud superior a la tolerancia.")
+    values = [_number(value, "Cada división") for value in (divisiones_pk or [])]
+    for value in values:
+        if value <= low + tolerancia_km or value >= high - tolerancia_km:
+            raise DivisionError("Cada división debe quedar estrictamente dentro del tramo.")
+    ordered = sorted(values)
+    if any(current - previous <= tolerancia_km for previous, current in zip(ordered, ordered[1:])):
+        raise DivisionError("No puede haber divisiones duplicadas o separadas menos de 2 m.")
+    return list(reversed(ordered)) if str(sentido or "").strip().lower() == "decreciente" else ordered
+
+
+def derivar_subtramos(pk_inicio: Any, pk_fin: Any, divisiones_pk: list[Any] | None,
+                      sentido: str = "creciente", tolerancia_km: float = TOLERANCIA_KM) -> list[dict[str, Any]]:
+    """Devuelve partes D01… contiguas; no son scopes ni perfiles nuevos."""
+    inicio, fin = _number(pk_inicio, "PK inicio"), _number(pk_fin, "PK fin")
+    direction = str(sentido or "creciente").strip().lower()
+    start, end = (max(inicio, fin), min(inicio, fin)) if direction == "decreciente" else (min(inicio, fin), max(inicio, fin))
+    divisions = normalizar_divisiones(start, end, divisiones_pk, direction, tolerancia_km)
+    points = [start, *divisions, end]
+    return [
+        {"id": f"D{index:02d}", "indice": index, "pk_inicio": float(left), "pk_fin": float(right),
+         "color": DIVISION_COLORS[(index - 1) % len(DIVISION_COLORS)]}
+        for index, (left, right) in enumerate(zip(points, points[1:]), 1)
+    ]

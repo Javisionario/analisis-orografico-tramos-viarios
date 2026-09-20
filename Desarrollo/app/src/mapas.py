@@ -59,7 +59,7 @@ from .utils import as_float, format_pk
 
 STUDY_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 STUDY_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
-SUBTRAMO_INTERIOR_PALETTE = ("#f4a3a8", "#e6858d", "#f2b4b8", "#e6858d")
+DIVISION_INTERIOR_PALETTE = ("#f4a3a8", "#df7f87")
 SLOPE_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 SLOPE_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
 
@@ -576,28 +576,6 @@ def _subtitle_multitramo(entries: list[dict[str, Any]]) -> list[str]:
     return [" · ".join(roads[:split_at]), " · ".join(roads[split_at:])]
 
 
-def _subtitle_subtramos(entries: list[dict[str, Any]], sentido: str) -> list[str]:
-    if not entries:
-        return []
-    road = str(entries[0].get("carretera") or "")
-    values = [float(value) for item in entries for value in (item["pk_inicio"], item["pk_fin"])]
-    start, end = (max(values), min(values)) if sentido == "decreciente" else (min(values), max(values))
-    return [f"{road} · PK {format_pk(start)} a {format_pk(end)}"]
-
-
-def subtramo_render_specs(entries: list[dict[str, Any]], rendered_ids: list[str]) -> list[dict[str, Any]]:
-    """Keep original subsegment identity after failed scopes are filtered out."""
-    by_id = {str(item.get("tramo_id")): item for item in entries}
-    result: list[dict[str, Any]] = []
-    for identifier in dict.fromkeys(rendered_ids):
-        item = by_id.get(str(identifier))
-        if item is None:
-            continue
-        original_index = int(item.get("original_index") or str(identifier).removeprefix("T") or 0)
-        result.append({**item, "tramo_id": str(identifier), "original_index": original_index, "color": SUBTRAMO_INTERIOR_PALETTE[(original_index - 1) % len(SUBTRAMO_INTERIOR_PALETTE)]})
-    return result
-
-
 def _finish(
     canvas: Image.Image,
     output_base: Path,
@@ -694,6 +672,7 @@ def generar_mapa_localizacion(
     mapa_base: str = "ign_gris",
     carto_api_key: str | None = None,
     raster_cache: dict[tuple[Any, ...], tuple[np.ndarray | None, dict[str, Any], list[str]]] | None = None,
+    subtramos_geometrias: list[TramoExtraido] | None = None,
 ) -> tuple[list[Path], dict[str, Any], list[str]]:
     warnings: list[str] = []
     timings: dict[str, float] = {}
@@ -721,7 +700,13 @@ def generar_mapa_localizacion(
     timings["elevaciones_curvas"] = round(perf_counter() - stage, 3)
     stage = perf_counter()
     road_segments = _draw_background_roads(canvas, roads, project, MAP_MAIN)
-    _draw_study_line(canvas, tramo_geo, project, MAP_MAIN)
+    parts = [_to_4326_geom(item.geometry, item.crs) for item in (subtramos_geometrias or [])]
+    if len(parts) > 1:
+        _draw_study_line(canvas, tramo_geo, project, MAP_MAIN, draw_interior=False)
+        for index, geometry in enumerate(parts):
+            _draw_study_line(canvas, geometry, project, MAP_MAIN, interior=DIVISION_INTERIOR_PALETTE[index % 2], draw_casing=False)
+    else:
+        _draw_study_line(canvas, tramo_geo, project, MAP_MAIN)
     _draw_pks(canvas, pk_items, roads, project, road_segments, MAP_MAIN)
     timings["vias_tramo_pks"] = round(perf_counter() - stage, 3)
     draw_main_outline(draw)
@@ -731,7 +716,7 @@ def generar_mapa_localizacion(
     draw_north_arrow(draw)
     draw_scale_bar(draw, bounds)
     legend_y = draw_left_title(draw, "Mapa de localización", _subtitle(tramo))
-    rows = [("Tramo de estudio", "#f4a3a8", "line")]
+    rows = [("Tramo de estudio", DIVISION_INTERIOR_PALETTE[0], "divided_line" if len(parts) > 1 else "line")]
     if elevation_meta.get("elevaciones_renderizadas"):
         rows.append(("Elevaciones", "", "heading"))
         rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
@@ -755,6 +740,7 @@ def generar_mapa_localizacion(
             "grosor_tramo_anterior": STUDY_LINE_WIDTHS_OLD,
             "grosor_tramo_nuevo": STUDY_LINE_WIDTHS_NEW,
             "mapa_base": basemap_config,
+            "divisiones": {"activo": len(parts) > 1, "paleta_interiores": list(DIVISION_INTERIOR_PALETTE) if len(parts) > 1 else []},
         },
         mapa_base,
     )
@@ -778,8 +764,7 @@ def generar_mapa_localizacion_multitramo(
     mostrar_anotaciones_curvas_nivel: bool = True,
     mapa_base: str = "ign_gris",
     carto_api_key: str | None = None,
-    subtramos: dict[str, Any] | None = None,
-    tramo_ids: list[str] | None = None,
+    division_geometries: list[list[TramoExtraido]] | None = None,
 ) -> tuple[list[Path], dict[str, Any], list[str]]:
     """Mapa único de localización para varios scopes ya extraídos."""
     if not tramos:
@@ -833,18 +818,15 @@ def generar_mapa_localizacion_multitramo(
     timings["elevaciones_curvas"] = round(perf_counter() - stage, 3)
     stage = perf_counter()
     road_segments = _draw_background_roads(canvas, roads, project, MAP_MAIN)
-    subtramos_active = bool(subtramos and subtramos.get("valido"))
-    palette = list(SUBTRAMO_INTERIOR_PALETTE)
-    specs = subtramo_render_specs(subtitle_entries or [], tramo_ids or []) if subtramos_active else []
-    if subtramos_active:
-        for geometry in tramos_geo:
+    part_groups = division_geometries or []
+    has_divisions = any(len(parts) > 1 for parts in part_groups)
+    for index, geometry in enumerate(tramos_geo):
+        parts = part_groups[index] if index < len(part_groups) else []
+        if len(parts) > 1:
             _draw_study_line(canvas, geometry, project, MAP_MAIN, draw_interior=False)
-        identifiers = tramo_ids or [f"T{index + 1:02d}" for index in range(len(tramos_geo))]
-        color_by_id = {item["tramo_id"]: item["color"] for item in specs}
-        for geometry, identifier in zip(tramos_geo, identifiers):
-            _draw_study_line(canvas, geometry, project, MAP_MAIN, interior=color_by_id.get(identifier, palette[0]), draw_casing=False)
-    else:
-        for geometry in tramos_geo:
+            for part_index, part in enumerate(parts):
+                _draw_study_line(canvas, _to_4326_geom(part.geometry, part.crs), project, MAP_MAIN, interior=DIVISION_INTERIOR_PALETTE[part_index % 2], draw_casing=False)
+        else:
             _draw_study_line(canvas, geometry, project, MAP_MAIN)
     road_labels_meta = _draw_road_labels(canvas, road_label_specs, project, MAP_MAIN)
     _draw_pks(canvas, unique_items, roads, project, road_segments, MAP_MAIN)
@@ -855,14 +837,8 @@ def generar_mapa_localizacion_multitramo(
     timings["inset_mapa_base_admin"] = round(perf_counter() - stage, 3)
     draw_north_arrow(draw)
     draw_scale_bar(draw, bounds)
-    legend_y = draw_left_title(draw, "Mapa de localización", _subtitle_subtramos(specs, str(subtramos.get("sentido"))) if subtramos_active else _subtitle_multitramo(subtitle_entries or []))
-    if subtramos_active:
-        rows = [("Subtramos del tramo de estudio", "", "heading")]
-        for item in specs:
-            label = f"Subtramo {item['original_index']} · PK {format_pk(item['pk_inicio'])}–{format_pk(item['pk_fin'])}" if len(specs) <= 6 else f"Subtramo {item['original_index']}"
-            rows.append((label, item["color"], "line"))
-    else:
-        rows = [("Tramos de estudio", "#f4a3a8", "line")]
+    legend_y = draw_left_title(draw, "Mapa de localización", _subtitle_multitramo(subtitle_entries or []))
+    rows = [("Tramos de estudio", DIVISION_INTERIOR_PALETTE[0], "divided_line" if has_divisions else "line")]
     if elevation_meta.get("elevaciones_renderizadas"):
         rows.append(("Elevaciones", "", "heading"))
         rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
@@ -872,7 +848,7 @@ def generar_mapa_localizacion_multitramo(
         {"pks_mapa": configs, "vias_fondo_modo": vias_fondo_modo, "numero_scopes": len(tramos),
          "tramos_estudio": scope_roads, **raster_meta, **elevation_meta, **contour_meta,
          "elevaciones_alpha": float(alpha_elevaciones), "etiquetas_carretera": road_labels_meta,
-         "subtramos": {"activo": subtramos_active, "paleta_interiores": palette if subtramos_active else [], "renderizados": specs},
+         "divisiones": {"activo": has_divisions, "paleta_interiores": list(DIVISION_INTERIOR_PALETTE) if has_divisions else []},
          "mapa_base": basemap_config}, mapa_base,
     )
 

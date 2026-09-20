@@ -504,6 +504,7 @@ def generar_perfil(
     sg_pendientes_polyorder_slider_visual: int | None = None,
     tramo_calculo: TramoExtraido | None = None,
     halo_puntos: int | None = None,
+    divisiones: list[dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], list[str]]:
     warnings: list[str] = []
     intervalo_base = 75.0 if intervalo_m is None else float(intervalo_m)
@@ -687,5 +688,6 @@ def generar_perfil(
         },
         **{key: value for key, value in summary.items() if key != "anomalias"},
         "anomalias": summary["anomalias"],
+        "divisiones": list(divisiones or []),
     }
     return df, meta, warnings

@@ -26,7 +26,7 @@ from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
 from src.visor_red import VisorRedError, agrupar_candidatos, bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
 from src.visor_pks import VALID_INTERVALS, csv_text, export_rows, pk_bbox_items, write_gpkg, write_kmz
-from src.subtramos import analizar_subtramos
+from src.subtramos import DivisionError, normalizar_divisiones
 
 import geopandas as gpd
 import pyogrio
@@ -63,6 +63,7 @@ class TramoRequest(BaseModel):
     pk_inicio: float
     pk_fin: float
     sentido: str = "creciente"
+    divisiones_pk: list[float] = []
 
 
 class GenerarRequest(BaseModel):
@@ -503,9 +504,12 @@ def generar(payload: GenerarRequest) -> JSONResponse:
         raise HTTPException(status_code=422, detail="Mapa base no valido.")
     tramos = payload.tramos or []
     if payload.agrupar_como_subtramos:
-        analysis = analizar_subtramos([item.model_dump() for item in tramos])
-        if not analysis["valido"]:
-            raise HTTPException(status_code=422, detail=analysis["motivo"])
+        raise HTTPException(status_code=422, detail="El modo agrupado se retiró; añada las divisiones PK dentro de cada tramo.")
+    try:
+        for item in tramos:
+            normalizar_divisiones(item.pk_inicio, item.pk_fin, item.divisiones_pk, item.sentido)
+    except DivisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     if len(tramos) > 1 and (payload.generar_mapa_pendientes or payload.generar_todo):
         raise HTTPException(
             status_code=422,

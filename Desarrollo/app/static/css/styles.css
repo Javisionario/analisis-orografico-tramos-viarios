@@ -1098,7 +1098,11 @@ select:disabled {
 .viewer-pk-errors { color: #8c3137; }
 .viewer-export { display: grid; gap: 7px; }
 .viewer-export > label { font-size: 12px; }
-.subsegments-control { margin-top: 10px; }
+.segment-divisions { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3eaed; }
+.division-row { display: flex; align-items: end; gap: 6px; margin: 6px 0; }
+.division-row label { flex: 1; }
+.division-row input { width: 100%; }
+.division-add { padding: 4px 7px; font-size: 11px; }
 .road-viewer-map { position: relative; grid-area: map; height: clamp(360px, 46vh, 460px); min-height: 360px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #edf1f2; }
 .road-viewer-network-status { grid-area: network; }
 .road-viewer-result { grid-area: result; }
