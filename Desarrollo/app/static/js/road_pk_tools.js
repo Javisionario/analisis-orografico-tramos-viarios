@@ -2,11 +2,40 @@
 (() => {
   "use strict";
 
-  const ZOOM_INTERVALS = Object.freeze([
-    { min: 16, interval: 1 }, { min: 15, interval: 5 }, { min: 14, interval: 10 },
-    { min: 13, interval: 20 }, { min: 12, interval: 50 }, { min: -Infinity, interval: 100 },
-  ]);
-  const intervalForZoom = (zoom) => (ZOOM_INTERVALS.find((item) => zoom >= item.min)?.interval || null);
+  const VIEWER_PK_INTERVALS = Object.freeze([1, 5, 10, 25, 50, 100, 250]);
+  const VIEWER_PK_MAX_SYMBOLS = 650;
+  const VIEWER_PK_MAX_LABELS = 90;
+  function pkDensityForZoom(zoom) { if (zoom >= 15) return { symbol: 1, label: 1 }; if (zoom >= 14) return { symbol: 1, label: 5 }; if (zoom >= 12) return { symbol: 5, label: 10 }; if (zoom >= 10) return { symbol: 10, label: 25 }; if (zoom >= 8) return { symbol: 25, label: 50 }; if (zoom >= 6) return { symbol: 50, label: 100 }; return { symbol: 100, label: 250 }; }
+  const greatestCommonDivisor = (left, right) => { let a = Math.abs(left); let b = Math.abs(right); while (b) [a, b] = [b, a % b]; return a; };
+  // The BBOX response is a source set, not the final density.  It must retain
+  // every later symbol and label rung (10/25 => 5, 100/250 => 50).
+  const sourceIntervalForZoom = (zoom) => { const density = pkDensityForZoom(zoom); return greatestCommonDivisor(density.symbol, density.label); };
+  const intervalForZoom = sourceIntervalForZoom;
+  const nextPkInterval = (interval) => VIEWER_PK_INTERVALS[Math.min(VIEWER_PK_INTERVALS.length - 1, Math.max(0, VIEWER_PK_INTERVALS.indexOf(interval)) + 1)];
+  const pkMatchesInterval = (item, interval) => Math.abs(Number(item.pk) / interval - Math.round(Number(item.pk) / interval)) < .001;
+  function balancedPkDensity(items, zoom) { let density = pkDensityForZoom(zoom); while (items.filter((item) => pkMatchesInterval(item, density.symbol)).length > VIEWER_PK_MAX_SYMBOLS && density.symbol < 250) density = { ...density, symbol: nextPkInterval(density.symbol), label: Math.max(density.label, nextPkInterval(density.symbol)) }; while (items.filter((item) => pkMatchesInterval(item, density.label)).length > VIEWER_PK_MAX_LABELS && density.label < 250) density = { ...density, label: nextPkInterval(density.label) }; return density; }
+  const pkKey = (item) => `${normalRoad(item.carretera)}|${Number(item.pk).toFixed(3)}|${Number(item.lon).toFixed(7)}|${Number(item.lat).toFixed(7)}`;
+  const pkCompare = (left, right) => pkKey(left).localeCompare(pkKey(right));
+  function selectEvenly(items, limit, required = []) {
+    const ordered = [...items].sort(pkCompare);
+    if (ordered.length <= limit) return ordered;
+    const byKey = new Map(ordered.map((item) => [pkKey(item), item]));
+    const retained = [...new Map(required.map((item) => [pkKey(item), byKey.get(pkKey(item))]).filter(([, item]) => item)).values()];
+    if (retained.length >= limit) return retained.slice(0, limit).sort(pkCompare);
+    const optional = ordered.filter((item) => !retained.some((chosen) => pkKey(chosen) === pkKey(item)));
+    const remaining = limit - retained.length;
+    const sampled = Array.from({ length: remaining }, (_, index) => optional[Math.floor(index * optional.length / remaining)]);
+    return [...retained, ...sampled].sort(pkCompare);
+  }
+  function overlaySelection(items, zoom) {
+    const density = balancedPkDensity(items, zoom);
+    const labelItems = selectEvenly(items.filter((item) => pkMatchesInterval(item, density.label)), VIEWER_PK_MAX_LABELS);
+    // A label may fall on a rung that is not a multiple of the symbol rung
+    // (10/25 and 100/250). Include it in the actual marker pool as well.
+    const symbolPool = [...new Map([...items.filter((item) => pkMatchesInterval(item, density.symbol)), ...labelItems].map((item) => [pkKey(item), item])).values()];
+    const symbolItems = selectEvenly(symbolPool, VIEWER_PK_MAX_SYMBOLS, labelItems);
+    return { density, symbolItems, labelItems };
+  }
   const normalRoad = (value) => String(value || "").trim().toUpperCase().replace(/[\s_-]+/g, "");
   const pkText = (pk) => { const metres = Math.round(Number(pk) * 1000); return `${Math.floor(metres / 1000)}+${String(Math.abs(metres % 1000)).padStart(3, "0")}`; };
   const parseValue = (text) => {
@@ -42,26 +71,28 @@
     const addHistory = (item) => { if (!item?.punto) return; history.set(historyKey(item), { ...item, selected: true }); updateExportButton(); };
     const escapeAttr = (value) => escapeHtml(value);
     function updateExportButton() { const button = document.querySelector("#viewerExportButton"); if (button) button.disabled = history.size === 0; }
-    function tickIcon(item) {
-      const major = Math.round(item.pk) % 5 === 0;
+    function pkIcon(item, showLabel) {
       // rotacion was verified against the PK_2023 geometry as a screen-space,
       // undirected road angle. Tangent remains the safe fallback for nulls.
       const rotation = Number.isFinite(Number(item.rotacion)) ? item.rotacion : (Number.isFinite(Number(item.rotacion_tangente)) ? item.rotacion_tangente : 0);
-      return L.divIcon({ className: "road-pk-icon-wrap", iconSize: [28, 28], iconAnchor: [14, 14], html: `<span class="road-pk-tick ${major ? "major" : ""}" style="transform:rotate(${rotation}deg)"></span>` });
-    }
-    function labelIcon(item) {
-      return L.divIcon({ className: "road-pk-label-wrap", iconSize: [1, 1], iconAnchor: [0, 0], html: `<span class="road-pk-label">${escapeHtml(item.pk_formateado)}</span>` });
+      const tickAngle = rotation + 90;
+      return L.divIcon({ className: "pk-marker", iconSize: [1, 1], iconAnchor: [0, 0], html: `<span class="pk-tick" style="transform:rotate(${tickAngle.toFixed(1)}deg)"></span>${showLabel ? `<span class="pk-callout"></span><span class="pk-label">${escapeHtml(item.pk_formateado)}</span>` : ""}` });
     }
     function drawOverlay(items) {
       overlay.clearLayers();
-      const occupied = [];
-      items.forEach((item) => {
-        L.marker([item.lat, item.lon], { pane: "roadPkPane", icon: tickIcon(item), interactive: false }).addTo(overlay);
+      const selection = overlaySelection(items, map.getZoom());
+      const { density, symbolItems, labelItems } = selection;
+      const labelKeys = new Set(labelItems.map(pkKey));
+      const occupied = []; let candidates = 0; let placed = 0;
+      symbolItems.forEach((item) => {
         const point = map.latLngToContainerPoint([item.lat, item.lon]);
-        const offsets = [[22, -34], [-92, -34], [22, 24], [-92, 24]];
-        const offset = offsets.find(([x, y]) => point.x + x > 8 && point.x + x < map.getSize().x - 75 && point.y + y > 8 && point.y + y < map.getSize().y - 22 && !occupied.some((other) => Math.abs(other.x - (point.x + x)) < 76 && Math.abs(other.y - (point.y + y)) < 24));
-        if (offset) { const anchor = map.containerPointToLatLng([point.x + offset[0], point.y + offset[1]]); occupied.push({ x: point.x + offset[0], y: point.y + offset[1] }); L.polyline([[item.lat, item.lon], anchor], { pane: "roadPkLabelPane", color: "#6b747b", weight: 1, opacity: .8, interactive: false }).addTo(overlay); L.marker(anchor, { pane: "roadPkLabelPane", icon: labelIcon(item), interactive: false }).addTo(overlay); }
+        const labelCandidate = labelKeys.has(pkKey(item)); if (labelCandidate) candidates += 1;
+        const box = [point.x + 28, point.y - 40, point.x + 28 + Math.min(96, Math.max(46, item.pk_formateado.length * 7 + 12)), point.y - 18];
+        const showLabel = labelCandidate && box[0] > 0 && box[1] > 0 && box[2] < map.getSize().x && !occupied.some((other) => box[0] < other[2] && box[2] > other[0] && box[1] < other[3] && box[3] > other[1]);
+        if (showLabel) { occupied.push(box); placed += 1; }
+        L.marker([item.lat, item.lon], { pane: "roadPkPane", icon: pkIcon(item, showLabel), interactive: false }).addTo(overlay);
       });
+      console.debug(`PK overlay: zoom=${map.getZoom()} source=${sourceIntervalForZoom(map.getZoom())} symbol=${density.symbol} label=${density.label} received=${items.length} symbols=${symbolItems.length} labelCandidates=${candidates} labelsPlaced=${placed}`);
       if (enabled && !map.hasLayer(overlay)) overlay.addTo(map);
     }
     async function load() {
@@ -151,9 +182,9 @@
       menu.querySelector("#viewerClearHistory")?.addEventListener("click", () => { history.clear(); updateExportButton(); showExport(); });
     }
     function toggleExport() { const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (menu && !menu.hidden) { menu.hidden = true; button?.setAttribute("aria-expanded", "false"); } else showExport(); }
-    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); if (wrap && !wrap.contains(event.target)) { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
+    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); const menu = document.querySelector("#viewerExportMenu"); if (wrap && !wrap.contains(event.target) && !menu?.contains(event.target)) { if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
     return { togglePanel: renderPkPanel, showLocateForm, scheduleLoad: scheduleAll, addHistory, showExport: toggleExport, parseText, intervalForZoom, selectedRoadsLayer };
   };
-  window.roadPkTools = { parseText, intervalForZoom, normalRoad };
+  window.roadPkTools = { parseText, intervalForZoom, sourceIntervalForZoom, normalRoad, overlaySelection };
 })();

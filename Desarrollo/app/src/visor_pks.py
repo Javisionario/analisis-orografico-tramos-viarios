@@ -17,7 +17,7 @@ from shapely.geometry import Point
 from .io_datos import normalize_road_name
 
 
-VALID_INTERVALS = {1, 5, 10, 20, 50, 100}
+VALID_INTERVALS = {1, 5, 10, 25, 50, 100, 250}
 _TEXT_LINE = re.compile(r"^\s*(?P<road>[^,;\s]+)\s*(?:[,;]|\s+)\s*(?P<pk>[-+]?\d+(?:[.,]\d+)?(?:\+\d{1,3})?)\s*$")
 
 

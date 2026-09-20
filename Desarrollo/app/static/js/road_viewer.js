@@ -351,6 +351,12 @@
       return;
     }
     map = L.map(mapElement, { zoomControl: true });
+    const exportMenu = document.querySelector("#viewerExportMenu");
+    if (exportMenu) {
+      mapElement.appendChild(exportMenu);
+      L.DomEvent.disableClickPropagation(exportMenu);
+      L.DomEvent.disableScrollPropagation(exportMenu);
+    }
     const grey = L.tileLayer("https://tms-ign-base.idee.es/1.0.0/IGNBaseGris/{z}/{x}/{y}.jpeg", { tms: true, maxNativeZoom: 17, maxZoom: 23, attribution: "Instituto Geográfico Nacional de España." });
     const photo = L.tileLayer("https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg", { maxZoom: 19, attribution: "PNOA Máxima Actualidad · Instituto Geográfico Nacional." });
     grey.addTo(map);
@@ -364,6 +370,7 @@
     measureLayer = L.layerGroup().addTo(map);
     pkTools = window.createRoadPkTools?.({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, usePk: async (road, pk, target) => window.setRoadFromViewer?.(road, target === "inicio" ? pk : null, target === "fin" ? pk : null), showNotice: showViewerNotice }) || null;
     L.control.layers({ "Callejero gris": grey, Ortofoto: photo }, { "Red calibrada": roadsLayer }, { collapsed: true }).addTo(map);
+    L.control.scale({ position: "bottomleft", metric: true, imperial: false, maxWidth: 180 }).addTo(map);
     map.on("moveend", () => { scheduleRoadLoad(); pkTools?.scheduleLoad(); });
     map.on("click", onMapClick);
     document.querySelectorAll("[data-viewer-tool]").forEach((button) => button.addEventListener("click", () => {
