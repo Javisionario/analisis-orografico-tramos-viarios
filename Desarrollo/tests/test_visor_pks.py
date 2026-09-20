@@ -107,10 +107,19 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("Identificar vía", template)
         self.assertIn("viewerExportMenu", template)
         self.assertIn('.viewer-export-menu input[type="checkbox"]', styles)
+        self.assertIn(".viewer-export-wrap { position: relative; z-index: 1210", styles)
+        self.assertIn(".viewer-export-menu { position: absolute; z-index: 1220; top: calc(100% + 6px); right: 0", styles)
+        self.assertIn(".road-viewer-toolbar { position: relative; z-index: 1200", styles)
         self.assertIn(".road-viewer-map .pk-tick", styles)
         self.assertIn(".road-viewer-map .pk-label", styles)
+        self.assertIn("height: clamp(360px, 46vh, 460px)", styles)
+        self.assertIn("height: clamp(340px, 52vh, 420px)", styles)
+        self.assertIn("background: rgba(255,255,255,.35)", styles)
+        self.assertIn('content: "0"', styles)
+        self.assertIn("center bottom 7px / 1px 2px no-repeat", styles)
         viewer_script = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
         self.assertIn('L.control.scale({ position: "bottomleft", metric: true, imperial: false, maxWidth: 180 })', viewer_script)
+        self.assertNotIn("mapElement.appendChild(exportMenu)", viewer_script)
 
     def test_frontend_density_keeps_non_divisible_labels_and_hard_limits(self) -> None:
         script = ROOT / "static" / "js" / "road_pk_tools.js"

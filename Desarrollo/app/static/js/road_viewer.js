@@ -351,12 +351,6 @@
       return;
     }
     map = L.map(mapElement, { zoomControl: true });
-    const exportMenu = document.querySelector("#viewerExportMenu");
-    if (exportMenu) {
-      mapElement.appendChild(exportMenu);
-      L.DomEvent.disableClickPropagation(exportMenu);
-      L.DomEvent.disableScrollPropagation(exportMenu);
-    }
     const grey = L.tileLayer("https://tms-ign-base.idee.es/1.0.0/IGNBaseGris/{z}/{x}/{y}.jpeg", { tms: true, maxNativeZoom: 17, maxZoom: 23, attribution: "Instituto Geográfico Nacional de España." });
     const photo = L.tileLayer("https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg", { maxZoom: 19, attribution: "PNOA Máxima Actualidad · Instituto Geográfico Nacional." });
     grey.addTo(map);
