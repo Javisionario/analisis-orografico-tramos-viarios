@@ -182,9 +182,10 @@
       menu.querySelector("#viewerClearHistory")?.addEventListener("click", () => { history.clear(); updateExportButton(); showExport(); });
     }
     function toggleExport() { const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (menu && !menu.hidden) { menu.hidden = true; button?.setAttribute("aria-expanded", "false"); } else showExport(); }
-    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); const menu = document.querySelector("#viewerExportMenu"); if (wrap && !wrap.contains(event.target) && !menu?.contains(event.target)) { if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
+    const isOutsideExportClick = (wrap, target) => Boolean(wrap && !wrap.contains(target));
+    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); const menu = document.querySelector("#viewerExportMenu"); if (isOutsideExportClick(wrap, event.target)) { if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
     return { togglePanel: renderPkPanel, showLocateForm, scheduleLoad: scheduleAll, addHistory, showExport: toggleExport, parseText, intervalForZoom, selectedRoadsLayer };
   };
-  window.roadPkTools = { parseText, intervalForZoom, sourceIntervalForZoom, normalRoad, overlaySelection };
+  window.roadPkTools = { parseText, intervalForZoom, sourceIntervalForZoom, normalRoad, overlaySelection, isOutsideExportClick: (wrap, target) => Boolean(wrap && !wrap.contains(target)) };
 })();

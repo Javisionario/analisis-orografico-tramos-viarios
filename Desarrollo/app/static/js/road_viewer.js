@@ -3,6 +3,9 @@
   "use strict";
 
   const ROAD_LAYER_MIN_ZOOM = 10;
+  const MAP_BOTTOM_MARGIN = 20;
+  const MAP_MIN_HEIGHT = 380;
+  const MAP_MAX_HEIGHT = 700;
   const SNAP_TOLERANCE_PX = 40;
   const MAX_SNAP_TOLERANCE_M = 500;
   const INTERACTION_STYLES = {
@@ -311,10 +314,22 @@
     }
   }
 
+  function viewerMapHeight(viewportHeight, mapTop, min = MAP_MIN_HEIGHT, max = MAP_MAX_HEIGHT, margin = MAP_BOTTOM_MARGIN) {
+    return Math.max(min, Math.min(max, Math.round(viewportHeight - mapTop - margin)));
+  }
+
+  function resizeViewerMapToViewport() {
+    if (!mapElement) return 0;
+    const rect = mapElement.getBoundingClientRect();
+    const height = viewerMapHeight(window.innerHeight, rect.top);
+    mapElement.style.height = `${height}px`;
+    return height;
+  }
+
   function invalidateMapSize() {
     if (!map) return;
     cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => map?.invalidateSize({ pan: false }));
+    resizeFrame = requestAnimationFrame(() => { resizeViewerMapToViewport(); map?.invalidateSize({ pan: false }); });
   }
 
   function focusMapPoint(point) {
@@ -375,8 +390,12 @@
     }));
     document.querySelector("#viewerExportButton")?.addEventListener("click", () => pkTools?.showExport());
     setNetworkStatus("Acércate para mostrar la red calibrada.");
-    if (window.ResizeObserver) new ResizeObserver(invalidateMapSize).observe(mapElement);
-    else window.addEventListener("resize", invalidateMapSize);
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => invalidateMapSize());
+      [formElement, resultElement, noticeElement, networkStatus].filter(Boolean).forEach((element) => observer.observe(element));
+    }
+    window.addEventListener("resize", invalidateMapSize);
+    window.addEventListener("orientationchange", invalidateMapSize);
     invalidateMapSize();
     applyNetworkBounds();
   }
@@ -385,5 +404,6 @@
     show() { requestAnimationFrame(() => requestAnimationFrame(invalidateMapSize)); },
     setHasResults(value) { hasResults = Boolean(value); resultsButton.hidden = !hasResults; },
   };
+  window.roadViewerSizing = { viewerMapHeight, resizeViewerMapToViewport };
   initialise();
 })();

@@ -564,7 +564,8 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
             "indice": 1, "carretera": carretera, "pk_inicio": pk_inicio, "pk_fin": pk_fin, "sentido": sentido_solicitado,
             "divisiones_pk_originales": requested_divisions,
             "divisiones_pk_normalizadas": normalizar_divisiones(pk_inicio, pk_fin, requested_divisions, sentido_solicitado),
-            "subtramos_derivados": derivar_subtramos(pk_inicio, pk_fin, requested_divisions, sentido_solicitado),
+            "subtramos_derivados": derivar_subtramos(pk_inicio, pk_fin, requested_divisions, "creciente" if sentido_solicitado == "ambos" else sentido_solicitado),
+            "subtramos_derivados_por_sentido": {direction: derivar_subtramos(pk_inicio, pk_fin, requested_divisions, direction) for direction in (["creciente", "decreciente"] if sentido_solicitado == "ambos" else [sentido_solicitado])},
         })
         sentidos = ["creciente", "decreciente"] if sentido_solicitado == "ambos" else [sentido_solicitado]
         metadata["sentido_solicitado"] = sentido_solicitado
@@ -735,7 +736,7 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
                 files.extend(scope_files)
                 warnings.extend(scope_warnings)
                 scope_meta["divisiones_pk_originales"] = list(params.get("divisiones_pk") or [])
-                scope_meta["divisiones_pk_normalizadas"] = [item["pk_inicio"] for item in divisiones[:-1]]
+                scope_meta["divisiones_pk_normalizadas"] = normalizar_divisiones(tramo.pk_inicio_recorrido, tramo.pk_fin_recorrido, params.get("divisiones_pk"), sentido_item)
                 scope_meta["subtramos_derivados"] = divisiones
                 metadata["scopes"].append(scope_meta)
                 metadata["sentidos_generados"].append(sentido_item)
@@ -890,7 +891,8 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                 metadata["tramos"].append({"indice": index, "carretera": road, "pk_inicio": pk_start, "pk_fin": pk_end,
                     "sentido": requested_direction, "divisiones_pk_originales": list(value.get("divisiones_pk") or []),
                     "divisiones_pk_normalizadas": normalized_for_request,
-                    "subtramos_derivados": derivar_subtramos(pk_start, pk_end, value.get("divisiones_pk"), requested_direction)})
+                    "subtramos_derivados": derivar_subtramos(pk_start, pk_end, value.get("divisiones_pk"), "creciente" if requested_direction == "ambos" else requested_direction),
+                    "subtramos_derivados_por_sentido": {direction: derivar_subtramos(pk_start, pk_end, value.get("divisiones_pk"), direction) for direction in (["creciente", "decreciente"] if requested_direction == "ambos" else [requested_direction])}})
             except DivisionError as exc:
                 errors.append(f"Tramo {index} · {road}: {exc}")
                 continue
@@ -952,7 +954,7 @@ def _generar_outputs_multitramo(params: dict[str, Any], progress: Any = None) ->
                     scope_meta["tramo_id"] = f"T{index:02d}"
                     scope_meta["indice_tramo"] = index
                     scope_meta["divisiones_pk_originales"] = list(value.get("divisiones_pk") or [])
-                    scope_meta["divisiones_pk_normalizadas"] = [part["pk_inicio"] for part in divisiones[:-1]]
+                    scope_meta["divisiones_pk_normalizadas"] = normalizar_divisiones(tramo.pk_inicio_recorrido, tramo.pk_fin_recorrido, value.get("divisiones_pk"), direction)
                     scope_meta["subtramos_derivados"] = divisiones
                     scope_meta["advertencias"] = list(dict.fromkeys(scope_notes + list(scope_warnings)))
                     metadata["mdt_por_scope"][scope_key] = mdt_meta

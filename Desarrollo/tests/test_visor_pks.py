@@ -25,6 +25,19 @@ PK_COLS = {"carretera": "MATRICULA", "pk": "VALORKM", "rotacion": "rotacion"}
 
 
 class ViewerPkTests(unittest.TestCase):
+    def test_viewer_height_uses_available_viewport_and_bounds(self) -> None:
+        script = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
+        self.assertIn("MAP_BOTTOM_MARGIN = 20", script)
+        self.assertIn("viewerMapHeight(window.innerHeight, rect.top)", script)
+        self.assertIn("Math.max(min, Math.min(max", script)
+        self.assertIn("resizeViewerMapToViewport", script)
+
+    def test_export_popover_only_closes_outside_its_wrapper(self) -> None:
+        script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
+        self.assertIn("isOutsideExportClick(wrap, event.target)", script)
+        self.assertIn("!wrap.contains(target)", script)
+        self.assertNotIn("!wrap.contains(event.target) && !menu?.contains", script)
+
     def test_intervals_match_the_acv_viewer_ladder(self) -> None:
         self.assertEqual(VALID_INTERVALS, {1, 5, 10, 25, 50, 100, 250})
     def test_rotation_column_is_detected_from_configured_candidates(self) -> None:
@@ -112,7 +125,7 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn(".road-viewer-toolbar { position: relative; z-index: 1200", styles)
         self.assertIn(".road-viewer-map .pk-tick", styles)
         self.assertIn(".road-viewer-map .pk-label", styles)
-        self.assertIn("height: clamp(360px, 46vh, 460px)", styles)
+        self.assertIn(".road-viewer-map { position: relative; grid-area: map; height: 500px; min-height: 360px", styles)
         self.assertIn("height: clamp(340px, 52vh, 420px)", styles)
         self.assertIn("background: rgba(255,255,255,.35)", styles)
         self.assertIn('content: "0"', styles)

@@ -62,6 +62,14 @@ class DivisionHelperTests(unittest.TestCase):
     def test_decreasing_unsorted_divisions_follow_route(self) -> None:
         self.assertEqual([(x["pk_inicio"], x["pk_fin"]) for x in derivar_subtramos(50, 10, [15, 30], "decreciente")], [(50, 30), (30, 15), (15, 10)])
 
+    def test_normalized_values_exclude_endpoints_in_both_directions(self) -> None:
+        self.assertEqual(normalizar_divisiones(10, 50, [30, 15], "creciente"), [15, 30])
+        self.assertEqual(normalizar_divisiones(50, 10, [15, 30], "decreciente"), [30, 15])
+
+    def test_ambos_has_a_derivation_for_each_real_direction(self) -> None:
+        self.assertEqual(derivar_subtramos(10, 50, [15, 30], "creciente")[0]["pk_inicio"], 10)
+        self.assertEqual(derivar_subtramos(10, 50, [15, 30], "decreciente")[0]["pk_inicio"], 50)
+
     def test_invalid_endpoints_duplicates_and_outside_are_rejected(self) -> None:
         for values in ([10], [20], [15, 15], [9]):
             with self.assertRaises(DivisionError):
