@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import math
 import re
+from xml.sax.saxutils import escape as xml_escape
+from zipfile import ZIP_DEFLATED, ZipFile
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterable
@@ -15,7 +17,7 @@ from shapely.geometry import Point
 from .io_datos import normalize_road_name
 
 
-VALID_INTERVALS = {1, 5, 10, 25, 50}
+VALID_INTERVALS = {1, 5, 10, 20, 50, 100}
 _TEXT_LINE = re.compile(r"^\s*(?P<road>[^,;\s]+)\s*(?:[,;]|\s+)\s*(?P<pk>[-+]?\d+(?:[.,]\d+)?(?:\+\d{1,3})?)\s*$")
 
 
@@ -143,3 +145,13 @@ def csv_text(rows: list[dict[str, Any]]) -> str:
 def write_gpkg(rows: list[dict[str, Any]], target: Path) -> None:
     data = gpd.GeoDataFrame(rows, geometry=[Point(item["longitud"], item["latitud"]) for item in rows], crs="EPSG:4326")
     data.to_file(target, layer="pks", driver="GPKG")
+
+
+def write_kmz(rows: list[dict[str, Any]], target: Path) -> None:
+    placemarks = []
+    for item in rows:
+        fields = "".join(f'<Data name="{xml_escape(name)}"><value>{xml_escape(str(value))}</value></Data>' for name, value in item.items())
+        placemarks.append(f"<Placemark><name>{xml_escape(item['carretera'])} · PK {xml_escape(item['pk'])}</name><ExtendedData>{fields}</ExtendedData><Point><coordinates>{item['longitud']},{item['latitud']},0</coordinates></Point></Placemark>")
+    kml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document>" + "".join(placemarks) + "</Document></kml>"
+    with ZipFile(target, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("doc.kml", kml.encode("utf-8"))

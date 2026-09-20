@@ -21,11 +21,11 @@ from starlette.requests import Request
 from src import APP_VERSION
 from src.exportacion import generar_outputs
 from src.credenciales import eliminar_api_key_carto, guardar_api_key_carto, obtener_api_key_carto
-from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, load_pks_bbox, resolve_road_name, viario_path
+from src.io_datos import diagnostico_capas, line_layer, list_road_options, load_lineas, load_lineas_bbox, load_lineas_bbox_roads, load_pks_bbox_roads, resolve_road_name, viario_path
 from src.tramo import ajustar_pk_a_rango, rango_disponible_sentido
 from src.utils import load_config, resolve_tool_path
 from src.visor_red import VisorRedError, agrupar_candidatos, bbox_wgs84_a_crs, localizar_pk, medir, punto_a_pk, punto_wgs84, vias_geojson
-from src.visor_pks import VALID_INTERVALS, csv_text, export_rows, pk_bbox_items, write_gpkg
+from src.visor_pks import VALID_INTERVALS, csv_text, export_rows, pk_bbox_items, write_gpkg, write_kmz
 from src.subtramos import analizar_subtramos
 
 import geopandas as gpd
@@ -308,9 +308,6 @@ def _parse_viewer_bbox(value: str) -> tuple[float, float, float, float]:
     west, south, east, north = values
     if not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= 90 and -90 <= north <= 90):
         raise ValueError("BBOX fuera de WGS84.")
-    # A leaf-map request should remain local. This protects the 204k-point layer.
-    if (east - west) * (north - south) > 4.0:
-        raise ValueError("BBOX demasiado amplio para los PK visibles.")
     return values
 
 
@@ -329,10 +326,33 @@ def visor_pks(
         raise HTTPException(status_code=422, detail="Demasiadas carreteras seleccionadas.")
     try:
         config = load_config()
+        roads = [resolve_road_name(config, road) for road in roads]
+        roads = [road for road in roads if road]
+        if not roads:
+            raise ValueError("No se encontraron las carreteras seleccionadas.")
         source_bbox = _bbox_en_capa(config, _parse_viewer_bbox(bbox))
-        pks, cols, _notes = load_pks_bbox(config, source_bbox)
-        lineas, _line_cols, _line_notes = load_lineas_bbox(config, source_bbox)
+        pks, cols, _notes = load_pks_bbox_roads(config, source_bbox, roads)
+        lineas, _line_cols, _line_notes = load_lineas_bbox_roads(config, source_bbox, roads)
         return {"items": pk_bbox_items(pks, cols, lineas, roads, intervalo), "intervalo": intervalo}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@app.get("/api/visor/vias-seleccionadas")
+def visor_vias_seleccionadas(bbox: str = Query(...), carreteras: str = Query(...)) -> dict[str, Any]:
+    roads = [item.strip() for item in carreteras.split(";") if item.strip()]
+    if not roads or len(roads) > 30:
+        raise HTTPException(status_code=422, detail="Seleccione entre una y 30 carreteras.")
+    try:
+        config = load_config()
+        resolved = [resolve_road_name(config, road) for road in roads]
+        resolved = [road for road in resolved if road]
+        if not resolved:
+            raise ValueError("No se encontraron las carreteras seleccionadas.")
+        lineas, cols, _notes = load_lineas_bbox_roads(config, _bbox_en_capa(config, _parse_viewer_bbox(bbox)), resolved)
+        return vias_geojson(lineas, cols)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except Exception as exc:
@@ -397,7 +417,7 @@ def _remove_tempfile(path: str) -> None:
 @app.post("/api/visor/exportar-pks")
 def visor_exportar_pks(payload: ExportarPksRequest, background_tasks: BackgroundTasks):
     formato = str(payload.formato or "").lower()
-    if formato not in {"csv", "gpkg"}:
+    if formato not in {"csv", "gpkg", "kmz"}:
         raise HTTPException(status_code=422, detail="Formato de exportación no válido.")
     try:
         rows = export_rows([item.model_dump() for item in payload.puntos])
@@ -409,15 +429,16 @@ def visor_exportar_pks(payload: ExportarPksRequest, background_tasks: Background
         return PlainTextResponse(csv_text(rows), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="pks.csv"'})
     # Keep short-lived exports inside the application workspace: desktop sandbox
     # profiles can deny GDAL access to the system temporary directory.
-    handle = tempfile.NamedTemporaryFile(prefix="visor_pks_", suffix=".gpkg", dir=ROOT, delete=False)
+    suffix = ".kmz" if formato == "kmz" else ".gpkg"
+    handle = tempfile.NamedTemporaryFile(prefix="visor_pks_", suffix=suffix, dir=ROOT, delete=False)
     handle.close()
     try:
-        write_gpkg(rows, Path(handle.name))
+        (write_kmz if formato == "kmz" else write_gpkg)(rows, Path(handle.name))
     except Exception as exc:
         _remove_tempfile(handle.name)
         raise HTTPException(status_code=503, detail=f"No se pudo generar GPKG: {exc}") from None
     background_tasks.add_task(_remove_tempfile, handle.name)
-    return FileResponse(handle.name, media_type="application/geopackage+sqlite3", filename="pks.gpkg", background=background_tasks)
+    return FileResponse(handle.name, media_type="application/vnd.google-earth.kmz" if formato == "kmz" else "application/geopackage+sqlite3", filename=f"pks.{formato}", background=background_tasks)
 
 
 @app.post("/api/visor/identificar")

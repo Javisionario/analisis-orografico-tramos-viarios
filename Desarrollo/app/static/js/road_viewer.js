@@ -356,6 +356,7 @@
     grey.addTo(map);
     map.setView([40.2, -3.7], 6);
     map.createPane("roadNetworkPane").style.zIndex = 410;
+    map.createPane("selectedRoadPane").style.zIndex = 430;
     map.createPane("roadPkPane").style.zIndex = 440;
     map.createPane("roadPkLabelPane").style.zIndex = 445;
     map.createPane("roadInteractionPane").style.zIndex = 460;

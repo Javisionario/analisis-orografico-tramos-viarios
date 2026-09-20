@@ -253,6 +253,41 @@ def load_pks_bbox(config: dict[str, Any], bbox: tuple[float, float, float, float
     return gdf, detect_columns(gdf, config, pk=True), notes
 
 
+def _read_layer_bbox_roads(path: Path, layer: str, bbox: tuple[float, float, float, float], road_column: str, roads: list[str]) -> tuple[gpd.GeoDataFrame, list[str]]:
+    """Read a spatially and attribute-filtered subset without materialising a national layer."""
+    if not roads:
+        return gpd.GeoDataFrame(geometry=[], crs=None), []
+    where = f"{_quote_identifier(road_column)} IN ({', '.join(sql_quote(road) for road in roads)})"
+    notes: list[str] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        gdf = gpd.read_file(path, layer=layer, bbox=bbox, where=where)
+    notes.extend(str(item.message) for item in caught if "Measured" in str(item.message) or "(M)" in str(item.message))
+    return gdf, notes
+
+
+def load_lineas_bbox_roads(config: dict[str, Any], bbox: tuple[float, float, float, float], roads: list[str]) -> tuple[gpd.GeoDataFrame, dict[str, str | None], list[str]]:
+    path, layer = viario_path(config), line_layer(config)
+    probe, notes = read_layer(path, layer, rows=1)
+    cols = detect_columns(probe, config, pk=False)
+    road_column = cols.get("carretera")
+    if not road_column:
+        return gpd.GeoDataFrame(geometry=[], crs=probe.crs), cols, notes + ["No se detectó el campo de carretera."]
+    gdf, read_notes = _read_layer_bbox_roads(path, layer, bbox, road_column, roads)
+    return gdf, detect_columns(gdf, config, pk=False), notes + read_notes
+
+
+def load_pks_bbox_roads(config: dict[str, Any], bbox: tuple[float, float, float, float], roads: list[str]) -> tuple[gpd.GeoDataFrame, dict[str, str | None], list[str]]:
+    path, layer = viario_path(config), pk_layer(config)
+    probe, notes = read_layer(path, layer, rows=1)
+    cols = detect_columns(probe, config, pk=True)
+    road_column = cols.get("carretera")
+    if not road_column:
+        return gpd.GeoDataFrame(geometry=[], crs=probe.crs), cols, notes + ["No se detectó el campo de carretera."]
+    gdf, read_notes = _read_layer_bbox_roads(path, layer, bbox, road_column, roads)
+    return gdf, detect_columns(gdf, config, pk=True), notes + read_notes
+
+
 def load_admin(config: dict[str, Any]) -> tuple[gpd.GeoDataFrame | None, gpd.GeoDataFrame | None, list[str]]:
     path = limites_path(config)
     notes: list[str] = []

@@ -4,7 +4,7 @@
 
   const ZOOM_INTERVALS = Object.freeze([
     { min: 16, interval: 1 }, { min: 15, interval: 5 }, { min: 14, interval: 10 },
-    { min: 13, interval: 25 }, { min: 10, interval: 50 },
+    { min: 13, interval: 20 }, { min: 12, interval: 50 }, { min: -Infinity, interval: 100 },
   ]);
   const intervalForZoom = (zoom) => (ZOOM_INTERVALS.find((item) => zoom >= item.min)?.interval || null);
   const normalRoad = (value) => String(value || "").trim().toUpperCase().replace(/[\s_-]+/g, "");
@@ -27,12 +27,15 @@
 
   window.createRoadPkTools = ({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, usePk, showNotice }) => {
     const overlay = L.layerGroup();
+    const selectedRoadsLayer = L.layerGroup().addTo(map);
     const markers = L.layerGroup().addTo(map);
     let selectedRoads = [];
-    let enabled = false;
+    let enabled = true;
     let timer = null;
     let controller = null;
     let requestId = 0;
+    let roadsController = null;
+    let roadsRequestId = 0;
     const history = new Map();
 
     const historyKey = (item) => `${normalRoad(item.carretera)}|${Math.round(Number(item.pk) * 1000)}|${Number(item.punto.lat).toFixed(6)}|${Number(item.punto.lon).toFixed(6)}`;
@@ -47,7 +50,7 @@
       return L.divIcon({ className: "road-pk-icon-wrap", iconSize: [28, 28], iconAnchor: [14, 14], html: `<span class="road-pk-tick ${major ? "major" : ""}" style="transform:rotate(${rotation}deg)"></span>` });
     }
     function labelIcon(item) {
-      return L.divIcon({ className: "road-pk-label-wrap", iconSize: [1, 1], iconAnchor: [-8, 13], html: `<span class="road-pk-label">${escapeHtml(item.pk_formateado)}</span>` });
+      return L.divIcon({ className: "road-pk-label-wrap", iconSize: [1, 1], iconAnchor: [0, 0], html: `<span class="road-pk-label">${escapeHtml(item.pk_formateado)}</span>` });
     }
     function drawOverlay(items) {
       overlay.clearLayers();
@@ -55,8 +58,9 @@
       items.forEach((item) => {
         L.marker([item.lat, item.lon], { pane: "roadPkPane", icon: tickIcon(item), interactive: false }).addTo(overlay);
         const point = map.latLngToContainerPoint([item.lat, item.lon]);
-        const collides = occupied.some((other) => Math.abs(other.x - point.x) < 42 && Math.abs(other.y - point.y) < 17);
-        if (!collides) { occupied.push(point); L.marker([item.lat, item.lon], { pane: "roadPkLabelPane", icon: labelIcon(item), interactive: false }).addTo(overlay); }
+        const offsets = [[22, -34], [-92, -34], [22, 24], [-92, 24]];
+        const offset = offsets.find(([x, y]) => point.x + x > 8 && point.x + x < map.getSize().x - 75 && point.y + y > 8 && point.y + y < map.getSize().y - 22 && !occupied.some((other) => Math.abs(other.x - (point.x + x)) < 76 && Math.abs(other.y - (point.y + y)) < 24));
+        if (offset) { const anchor = map.containerPointToLatLng([point.x + offset[0], point.y + offset[1]]); occupied.push({ x: point.x + offset[0], y: point.y + offset[1] }); L.polyline([[item.lat, item.lon], anchor], { pane: "roadPkLabelPane", color: "#6b747b", weight: 1, opacity: .8, interactive: false }).addTo(overlay); L.marker(anchor, { pane: "roadPkLabelPane", icon: labelIcon(item), interactive: false }).addTo(overlay); }
       });
       if (enabled && !map.hasLayer(overlay)) overlay.addTo(map);
     }
@@ -78,12 +82,20 @@
       } catch (error) { if (error.name !== "AbortError" && id === requestId) showNotice(error.message, "warning"); }
     }
     function scheduleLoad() { clearTimeout(timer); timer = setTimeout(load, 220); }
+    async function loadSelectedRoads() {
+      roadsController?.abort(); const id = ++roadsRequestId;
+      if (!selectedRoads.length) { selectedRoadsLayer.clearLayers(); return; }
+      const bounds = map.getBounds(); if (!bounds.isValid()) return;
+      roadsController = new AbortController();
+      try { const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(","); const response = await fetch(`/api/visor/vias-seleccionadas?${new URLSearchParams({ bbox, carreteras: selectedRoads.join(";") })}`, { signal: roadsController.signal }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || "No se pudieron cargar las vías identificadas."); if (id !== roadsRequestId) return; selectedRoadsLayer.clearLayers(); const style = (pass) => (feature) => ({ pane: "selectedRoadPane", lineCap: "round", lineJoin: "round", ...(feature.properties?.autovia ? (pass === "casing" ? { color: "#7f1d1d", weight: 9.2, opacity: .94 } : { color: "#dc5b63", weight: 6.2, opacity: .96 }) : (pass === "casing" ? { color: "#7f1d1d", weight: 5.4, opacity: .94 } : { color: "#dc5b63", weight: 2.4, opacity: .98 })) }); L.geoJSON(data, { style: style("casing") }).addTo(selectedRoadsLayer); L.geoJSON(data, { style: style("interior") }).addTo(selectedRoadsLayer); } catch (error) { if (error.name !== "AbortError" && id === roadsRequestId) showNotice(error.message, "warning"); }
+    }
+    function scheduleAll() { scheduleLoad(); clearTimeout(timer); timer = setTimeout(() => { load(); loadSelectedRoads(); }, 220); }
     function renderPkPanel() {
-      formElement.innerHTML = `<div class="viewer-inline-form viewer-pk-panel"><strong>PKs visibles</strong><div class="viewer-road-chips">${selectedRoads.map((road) => `<button type="button" class="viewer-chip" data-remove-pk-road="${escapeAttr(road)}">${escapeHtml(road)} ×</button>`).join("")}</div><label>Añadir vía <input id="viewerPkRoad" list="viewerPkRoadOptions" autocomplete="off"></label><datalist id="viewerPkRoadOptions"></datalist><button type="button" class="ghost" id="viewerAddPkRoad">+ Añadir vía</button><button type="button" class="ghost" id="viewerTogglePk">${enabled ? "Ocultar PKs" : "Mostrar PKs"}</button><span class="field-message">${selectedRoads.length ? "Densidad automática según zoom." : "Añade una carretera para mostrar sus PKs."}</span></div>`;
+      formElement.innerHTML = `<div class="viewer-inline-form viewer-pk-panel"><strong>Vías identificadas</strong><div class="viewer-road-chips">${selectedRoads.map((road) => `<button type="button" class="viewer-chip" data-remove-pk-road="${escapeAttr(road)}">${escapeHtml(road)} ×</button>`).join("")}</div><label>Añadir vía <input id="viewerPkRoad" list="viewerPkRoadOptions" autocomplete="off"></label><datalist id="viewerPkRoadOptions"></datalist><button type="button" class="ghost" id="viewerAddPkRoad">+ Añadir vía</button><label class="viewer-pk-checkbox"><input id="viewerTogglePk" type="checkbox" ${enabled ? "checked" : ""}> Mostrar PKs</label><span class="field-message">${selectedRoads.length ? "Densidad automática según zoom." : "Añade una carretera para destacarla."}</span></div>`;
       fetch("/api/carreteras").then((response) => response.ok ? response.json() : { items: [] }).then((data) => { const list = document.querySelector("#viewerPkRoadOptions"); if (list) list.innerHTML = (data.items || []).map((item) => `<option value="${escapeAttr(item.carretera)}"></option>`).join(""); }).catch(() => {});
-      formElement.querySelectorAll("[data-remove-pk-road]").forEach((button) => button.addEventListener("click", () => { selectedRoads = selectedRoads.filter((road) => road !== button.dataset.removePkRoad); renderPkPanel(); scheduleLoad(); }));
-      document.querySelector("#viewerAddPkRoad")?.addEventListener("click", () => { const input = document.querySelector("#viewerPkRoad"); const value = input.value.trim(); if (value && !selectedRoads.some((road) => normalRoad(road) === normalRoad(value))) selectedRoads.push(value); renderPkPanel(); scheduleLoad(); });
-      document.querySelector("#viewerTogglePk")?.addEventListener("click", () => { enabled = !enabled; if (!enabled) { overlay.remove(); controller?.abort(); } renderPkPanel(); scheduleLoad(); });
+      formElement.querySelectorAll("[data-remove-pk-road]").forEach((button) => button.addEventListener("click", () => { selectedRoads = selectedRoads.filter((road) => road !== button.dataset.removePkRoad); renderPkPanel(); scheduleAll(); }));
+      document.querySelector("#viewerAddPkRoad")?.addEventListener("click", () => { const input = document.querySelector("#viewerPkRoad"); const value = input.value.trim(); if (value && !selectedRoads.some((road) => normalRoad(road) === normalRoad(value))) selectedRoads.push(value); renderPkPanel(); scheduleAll(); });
+      document.querySelector("#viewerTogglePk")?.addEventListener("change", (event) => { enabled = event.currentTarget.checked; if (!enabled) { overlay.remove(); controller?.abort(); } else scheduleLoad(); });
     }
     function pointCard(item) {
       const coords = `${Number(item.punto.lat).toFixed(6)}, ${Number(item.punto.lon).toFixed(6)}`;
@@ -128,15 +140,20 @@
     }
     function showExport() {
       const rows = [...history.entries()];
-      setResult(`<div class="viewer-card viewer-export"><strong>Puntos guardados</strong>${rows.map(([key, item]) => `<label><input type="checkbox" data-export-key="${escapeAttr(key)}" ${item.selected ? "checked" : ""}> ${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</label>`).join("") || "<p>El historial está vacío.</p>"}<div class="viewer-actions"><button type="button" class="ghost" id="viewerAllExport">Todos</button><button type="button" class="ghost" id="viewerNoneExport">Ninguno</button><button type="button" class="ghost" data-export-format="csv">CSV</button><button type="button" class="ghost" data-export-format="gpkg">GPKG</button><button type="button" class="ghost" id="viewerClearHistory">Vaciar historial</button></div></div>`);
-      const sync = () => document.querySelectorAll("[data-export-key]").forEach((box) => { const item = history.get(box.dataset.exportKey); if (item) item.selected = box.checked; });
-      document.querySelectorAll("[data-export-key]").forEach((box) => box.addEventListener("change", sync));
-      document.querySelector("#viewerAllExport")?.addEventListener("click", () => { history.forEach((item) => { item.selected = true; }); showExport(); });
-      document.querySelector("#viewerNoneExport")?.addEventListener("click", () => { history.forEach((item) => { item.selected = false; }); showExport(); });
-      document.querySelectorAll("[data-export-format]").forEach((button) => button.addEventListener("click", () => { sync(); exportSelected(button.dataset.exportFormat); }));
-      document.querySelector("#viewerClearHistory")?.addEventListener("click", () => { history.clear(); updateExportButton(); showExport(); });
+      const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (!menu || !button) return;
+      menu.innerHTML = `<strong>Puntos guardados</strong><div class="viewer-export-list">${rows.map(([key, item]) => `<label><input type="checkbox" data-export-key="${escapeAttr(key)}" ${item.selected ? "checked" : ""}><span>${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</span></label>`).join("") || "<p>El historial está vacío.</p>"}</div><div class="viewer-actions"><button type="button" class="ghost" id="viewerAllExport">Todos</button><button type="button" class="ghost" id="viewerNoneExport">Ninguno</button><button type="button" class="ghost" data-export-format="csv">CSV</button><button type="button" class="ghost" data-export-format="gpkg">GPKG</button><button type="button" class="ghost" data-export-format="kmz">KMZ</button><button type="button" class="ghost" id="viewerClearHistory">Vaciar historial</button></div>`;
+      menu.hidden = false; button.setAttribute("aria-expanded", "true");
+      const sync = () => menu.querySelectorAll("[data-export-key]").forEach((box) => { const item = history.get(box.dataset.exportKey); if (item) item.selected = box.checked; });
+      menu.querySelectorAll("[data-export-key]").forEach((box) => box.addEventListener("change", sync));
+      menu.querySelector("#viewerAllExport")?.addEventListener("click", () => { history.forEach((item) => { item.selected = true; }); showExport(); });
+      menu.querySelector("#viewerNoneExport")?.addEventListener("click", () => { history.forEach((item) => { item.selected = false; }); showExport(); });
+      menu.querySelectorAll("[data-export-format]").forEach((button) => button.addEventListener("click", () => { sync(); exportSelected(button.dataset.exportFormat); }));
+      menu.querySelector("#viewerClearHistory")?.addEventListener("click", () => { history.clear(); updateExportButton(); showExport(); });
     }
-    return { togglePanel: renderPkPanel, showLocateForm, scheduleLoad, addHistory, showExport, parseText, intervalForZoom };
+    function toggleExport() { const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (menu && !menu.hidden) { menu.hidden = true; button?.setAttribute("aria-expanded", "false"); } else showExport(); }
+    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); if (wrap && !wrap.contains(event.target)) { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
+    return { togglePanel: renderPkPanel, showLocateForm, scheduleLoad: scheduleAll, addHistory, showExport: toggleExport, parseText, intervalForZoom, selectedRoadsLayer };
   };
   window.roadPkTools = { parseText, intervalForZoom, normalRoad };
 })();

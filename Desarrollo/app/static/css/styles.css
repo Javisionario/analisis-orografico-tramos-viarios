@@ -1062,6 +1062,12 @@ select:disabled {
 
 .viewer-results-button { margin-left: auto; }
 .viewer-export-button { margin-left: auto; }
+.viewer-export-wrap { position: relative; margin-left: auto; }
+.viewer-export-wrap + .viewer-results-button { margin-left: 0; }
+.viewer-export-menu { position: absolute; z-index: 700; top: calc(100% + 6px); right: 0; width: min(340px, 82vw); padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; box-shadow: 0 5px 18px rgba(25,35,45,.2); font-size: 12px; }
+.viewer-export-list { display: grid; gap: 6px; max-height: 320px; overflow: auto; margin: 8px 0; }
+.viewer-export-list label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.viewer-export-menu input[type="checkbox"] { width: 14px; height: 14px; min-width: 14px; padding: 0; margin: 0; accent-color: var(--accent-dark); }
 .road-viewer-toolbar { grid-area: toolbar; }
 .road-viewer-notice { grid-area: notice; max-height: 48px; margin: 0; overflow: hidden; padding: 7px 10px; border: 1px solid #ead8b5; border-radius: 6px; color: #73551f; background: #fff9ed; font-size: 12px; line-height: 1.35; opacity: 1; transition: opacity 160ms ease, max-height 160ms ease, padding 160ms ease, border-width 160ms ease; }
 .road-viewer-notice[hidden] { display: block; max-height: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; border-bottom-width: 0; opacity: 0; pointer-events: none; }
@@ -1084,6 +1090,9 @@ select:disabled {
 .road-pk-tick { position: absolute; top: 13px; left: 7px; display: block; width: 14px; height: 2px; border-radius: 2px; background: rgba(34, 42, 48, .82); transform-origin: 7px 1px; }
 .road-pk-tick.major { left: 4px; width: 20px; height: 2.5px; }
 .road-pk-label { display: block; width: max-content; padding: 1px 3px; border: 1px solid rgba(91, 99, 104, .32); border-radius: 3px; background: rgba(255,255,255,.82); color: #27313a; font: 600 10px/1.2 system-ui, sans-serif; box-shadow: 0 1px 1px rgba(0,0,0,.08); }
+.road-pk-label { padding: 4px 6px; border-radius: 6px; border-color: rgba(91,99,104,.44); font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.viewer-pk-checkbox { display: inline-flex !important; align-items: center; gap: 5px; }
+.viewer-pk-checkbox input { width: 14px; height: 14px; min-width: 14px; margin: 0; }
 .viewer-pk-results, .viewer-pk-errors { display: grid; gap: 5px; margin: 9px 0 0; padding-left: 18px; font-size: 12px; }
 .viewer-pk-result { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .viewer-pk-result a { color: var(--accent-dark); }
