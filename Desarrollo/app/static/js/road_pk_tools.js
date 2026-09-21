@@ -5,6 +5,7 @@
   const VIEWER_PK_INTERVALS = Object.freeze([1, 5, 10, 25, 50, 100, 250]);
   const VIEWER_PK_MAX_SYMBOLS = 650;
   const VIEWER_PK_MAX_LABELS = 90;
+  const RECENT_LOCATION_MAX = 12;
   function pkDensityForZoom(zoom) { if (zoom >= 15) return { symbol: 1, label: 1 }; if (zoom >= 14) return { symbol: 1, label: 5 }; if (zoom >= 12) return { symbol: 5, label: 10 }; if (zoom >= 10) return { symbol: 10, label: 25 }; if (zoom >= 8) return { symbol: 25, label: 50 }; if (zoom >= 6) return { symbol: 50, label: 100 }; return { symbol: 100, label: 250 }; }
   const greatestCommonDivisor = (left, right) => { let a = Math.abs(left); let b = Math.abs(right); while (b) [a, b] = [b, a % b]; return a; };
   // The BBOX response is a source set, not the final density.  It must retain
@@ -37,6 +38,12 @@
     return { density, symbolItems, labelItems };
   }
   const normalRoad = (value) => String(value || "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+  const recentLocationKey = (item) => `${normalRoad(item.carretera)}|${Math.round(Number(item.pk) * 1000)}`;
+  function rememberRecent(entries, item, maximum = RECENT_LOCATION_MAX) {
+    if (!item?.punto || !Number.isFinite(Number(item.pk)) || !String(item.carretera || "").trim()) return entries;
+    const entry = { carretera: item.carretera, pk: Number(item.pk) };
+    return [entry, ...entries.filter((current) => recentLocationKey(current) !== recentLocationKey(entry))].slice(0, maximum);
+  }
   const pkText = (pk) => { const metres = Math.round(Number(pk) * 1000); return `${Math.floor(metres / 1000)}+${String(Math.abs(metres % 1000)).padStart(3, "0")}`; };
   const parseValue = (text) => {
     const value = String(text).trim().replace(",", ".");
@@ -54,7 +61,7 @@
     return { valid, errors };
   }
 
-  window.createRoadPkTools = ({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, usePk, showNotice }) => {
+  window.createRoadPkTools = ({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, locationCopyActions, usePk, showNotice }) => {
     const overlay = L.layerGroup();
     const selectedRoadsLayer = L.layerGroup().addTo(map);
     const markers = L.layerGroup().addTo(map);
@@ -66,9 +73,11 @@
     let roadsController = null;
     let roadsRequestId = 0;
     const history = new Map();
+    let recentLocations = [];
 
     const historyKey = (item) => `${normalRoad(item.carretera)}|${Math.round(Number(item.pk) * 1000)}|${Number(item.punto.lat).toFixed(6)}|${Number(item.punto.lon).toFixed(6)}`;
     const addHistory = (item) => { if (!item?.punto) return; history.set(historyKey(item), { ...item, selected: true }); updateExportButton(); };
+    const addRecentLocation = (item) => { recentLocations = rememberRecent(recentLocations, item); };
     const escapeAttr = (value) => escapeHtml(value);
     function updateExportButton() { const button = document.querySelector("#viewerExportButton"); if (button) button.disabled = history.size === 0; }
     function pkIcon(item, showLabel) {
@@ -130,10 +139,9 @@
     }
     function pointCard(item) {
       const coords = `${Number(item.punto.lat).toFixed(6)}, ${Number(item.punto.lon).toFixed(6)}`;
-      return `<li class="viewer-pk-result"><strong>${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</strong><a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(`${item.punto.lat},${item.punto.lon}`)}" target="_blank" rel="noopener noreferrer">${coords} ↗</a><button type="button" class="viewer-copy" data-pk-copy="${escapeAttr(coords)}">copiar</button><button type="button" class="viewer-copy" data-pk-use="inicio" data-road="${escapeAttr(item.carretera)}" data-pk="${item.pk}">PK inicio</button><button type="button" class="viewer-copy" data-pk-use="fin" data-road="${escapeAttr(item.carretera)}" data-pk="${item.pk}">PK fin</button></li>`;
+      return `<li class="viewer-pk-result"><strong>${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</strong><a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(`${item.punto.lat},${item.punto.lon}`)}" target="_blank" rel="noopener noreferrer">${coords} ↗</a><span class="viewer-copy-actions">${locationCopyActions(item)}</span><button type="button" class="viewer-copy" data-pk-use="inicio" data-road="${escapeAttr(item.carretera)}" data-pk="${item.pk}">PK inicio</button><button type="button" class="viewer-copy" data-pk-use="fin" data-road="${escapeAttr(item.carretera)}" data-pk="${item.pk}">PK fin</button></li>`;
     }
     function bindResultActions() {
-      document.querySelectorAll("[data-pk-copy]").forEach((button) => button.addEventListener("click", () => navigator.clipboard?.writeText(button.dataset.pkCopy)));
       document.querySelectorAll("[data-pk-use]").forEach((button) => button.addEventListener("click", () => usePk(button.dataset.road, Number(button.dataset.pk), button.dataset.pkUse)));
       document.querySelector("#viewerZoomAll")?.addEventListener("click", () => { const pts = [...markers.getLayers()]; if (pts.length) map.fitBounds(L.featureGroup(pts).getBounds(), { padding: [24, 24] }); });
       document.querySelector("#viewerClearLocated")?.addEventListener("click", () => { markers.clearLayers(); setResult(""); });
@@ -141,7 +149,7 @@
     function showBatchResults(results, parseErrors = []) {
       markers.clearLayers();
       const valid = results.filter((item) => !item.error);
-      valid.forEach((item) => { drawPoint(item.punto, `${item.carretera} · PK ${pkText(item.pk)}`, "locate", markers); addHistory(item); });
+      valid.forEach((item) => { drawPoint(item.punto, `${item.carretera} · PK ${pkText(item.pk)}`, "locate", markers); addHistory(item); addRecentLocation(item); });
       const errors = [...results.filter((item) => item.error).map((item) => ({ text: `Entrada ${item.indice + 1}`, error: item.error })), ...parseErrors.map((item) => ({ text: `Línea ${item.line}: ${item.text}`, error: item.error }))];
       setResult(`<div class="viewer-card"><strong>${valid.length} PK localizados · ${errors.length} error${errors.length === 1 ? "" : "es"}</strong><div class="viewer-actions"><button type="button" class="ghost" id="viewerZoomAll">Zoom a todos</button><button type="button" class="ghost" id="viewerClearLocated">Borrar marcadores</button></div><ol class="viewer-pk-results">${valid.map(pointCard).join("")}</ol>${errors.length ? `<ul class="viewer-pk-errors">${errors.map((item) => `<li>${escapeHtml(item.text)}: ${escapeHtml(item.error)}</li>`).join("")}</ul>` : ""}</div>`);
       bindResultActions();
@@ -154,11 +162,29 @@
       } catch (error) { setResult(`<p class="viewer-message">${escapeHtml(error.message)}</p>`); }
     }
     function addRow() { const rows = document.querySelector("#viewerLocateRows"); rows.insertAdjacentHTML("beforeend", `<div class="viewer-locate-row"><input data-locate-road list="viewerLocateRoads" placeholder="Carretera"><input data-locate-pk placeholder="25.000"><button type="button" class="viewer-copy" data-remove-row>×</button></div>`); rows.lastElementChild.querySelector("[data-remove-row]").addEventListener("click", (event) => event.currentTarget.closest(".viewer-locate-row").remove()); }
+    function closeRecentMenu() { const menu = document.querySelector("#viewerRecentMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerRecentButton")?.setAttribute("aria-expanded", "false"); }
+    function showRecentMenu() {
+      const menu = document.querySelector("#viewerRecentMenu"); const button = document.querySelector("#viewerRecentButton");
+      if (!menu || !button) return;
+      const exportMenu = document.querySelector("#viewerExportMenu"); if (exportMenu) exportMenu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false");
+      if (!menu.hidden) { closeRecentMenu(); return; }
+      menu.innerHTML = `<strong>Recientes</strong><div class="viewer-recent-list">${recentLocations.map((item) => `<button type="button" data-recent-road="${escapeAttr(item.carretera)}" data-recent-pk="${item.pk}">${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</button>`).join("") || "<p>No hay localizaciones recientes.</p>"}</div>`;
+      menu.hidden = false; button.setAttribute("aria-expanded", "true");
+      menu.querySelectorAll("[data-recent-road]").forEach((entry) => entry.addEventListener("click", () => replayRecent({ carretera: entry.dataset.recentRoad, pk: Number(entry.dataset.recentPk) })));
+    }
+    function replayRecent(item) {
+      showLocateForm();
+      const row = document.querySelector(".viewer-locate-row");
+      if (row) { row.querySelector("[data-locate-road]").value = item.carretera; row.querySelector("[data-locate-pk]").value = pkText(item.pk); }
+      closeRecentMenu();
+      locate([{ carretera: item.carretera, pk: item.pk }]);
+    }
     function showLocateForm() {
-      formElement.innerHTML = `<div class="viewer-inline-form viewer-locate-panel"><div id="viewerLocateRows"></div><datalist id="viewerLocateRoads"></datalist><div class="viewer-actions"><button type="button" class="ghost" id="viewerAddLocateRow">+</button><button type="button" class="ghost" id="viewerPasteList">Pegar lista</button><button type="button" class="ghost" id="viewerLocateSubmit">Localizar</button></div></div>`;
+      formElement.innerHTML = `<div class="viewer-inline-form viewer-locate-panel"><div id="viewerLocateRows"></div><datalist id="viewerLocateRoads"></datalist><div class="viewer-actions"><button type="button" class="ghost" id="viewerAddLocateRow">+</button><button type="button" class="ghost" id="viewerPasteList">Pegar lista</button><div class="viewer-recent-wrap"><button type="button" class="ghost" id="viewerRecentButton" aria-expanded="false">Recientes ▾</button><div id="viewerRecentMenu" class="viewer-recent-menu" hidden></div></div><button type="button" class="ghost" id="viewerLocateSubmit">Localizar</button></div></div>`;
       fetch("/api/carreteras").then((response) => response.ok ? response.json() : { items: [] }).then((data) => { document.querySelector("#viewerLocateRoads").innerHTML = (data.items || []).map((item) => `<option value="${escapeAttr(item.carretera)}"></option>`).join(""); }).catch(() => {});
       addRow();
       document.querySelector("#viewerAddLocateRow").addEventListener("click", addRow);
+      document.querySelector("#viewerRecentButton").addEventListener("click", showRecentMenu);
       document.querySelector("#viewerPasteList").addEventListener("click", () => { document.querySelector(".viewer-locate-panel").innerHTML = `<label>Pegar lista de PK<textarea id="viewerPasteText" rows="5" placeholder="N-320 160+000\nA-1 250+000"></textarea></label><div class="viewer-actions"><button type="button" class="ghost" id="viewerRowsMode">Filas</button><button type="button" class="ghost" id="viewerPasteSubmit">Localizar</button></div>`; document.querySelector("#viewerRowsMode").addEventListener("click", showLocateForm); document.querySelector("#viewerPasteSubmit").addEventListener("click", () => { const parsed = parseText(document.querySelector("#viewerPasteText").value); locate(parsed.valid, parsed.errors); }); });
       document.querySelector("#viewerLocateSubmit").addEventListener("click", () => { const points = [...document.querySelectorAll(".viewer-locate-row")].map((row) => { try { return { carretera: row.querySelector("[data-locate-road]").value.trim(), pk: parseValue(row.querySelector("[data-locate-pk]").value) }; } catch (_) { return null; } }).filter(Boolean); locate(points); });
     }
@@ -172,6 +198,7 @@
     function showExport() {
       const rows = [...history.entries()];
       const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (!menu || !button) return;
+      closeRecentMenu();
       menu.innerHTML = `<strong>Puntos guardados</strong><div class="viewer-export-list">${rows.map(([key, item]) => `<label><input type="checkbox" data-export-key="${escapeAttr(key)}" ${item.selected ? "checked" : ""}><span>${escapeHtml(item.carretera)} · PK ${pkText(item.pk)}</span></label>`).join("") || "<p>El historial está vacío.</p>"}</div><div class="viewer-actions"><button type="button" class="ghost" id="viewerAllExport">Todos</button><button type="button" class="ghost" id="viewerNoneExport">Ninguno</button><button type="button" class="ghost" data-export-format="csv">CSV</button><button type="button" class="ghost" data-export-format="gpkg">GPKG</button><button type="button" class="ghost" data-export-format="kmz">KMZ</button><button type="button" class="ghost" id="viewerClearHistory">Vaciar historial</button></div>`;
       menu.hidden = false; button.setAttribute("aria-expanded", "true");
       const sync = () => menu.querySelectorAll("[data-export-key]").forEach((box) => { const item = history.get(box.dataset.exportKey); if (item) item.selected = box.checked; });
@@ -183,9 +210,9 @@
     }
     function toggleExport() { const menu = document.querySelector("#viewerExportMenu"); const button = document.querySelector("#viewerExportButton"); if (menu && !menu.hidden) { menu.hidden = true; button?.setAttribute("aria-expanded", "false"); } else showExport(); }
     const isOutsideExportClick = (wrap, target) => Boolean(wrap && !wrap.contains(target));
-    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); const menu = document.querySelector("#viewerExportMenu"); if (isOutsideExportClick(wrap, event.target)) { if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
-    document.addEventListener("keydown", (event) => { if (event.key === "Escape") { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } });
+    document.addEventListener("click", (event) => { const wrap = document.querySelector(".viewer-export-wrap"); const menu = document.querySelector("#viewerExportMenu"); if (isOutsideExportClick(wrap, event.target)) { if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); } const recentWrap = document.querySelector(".viewer-recent-wrap"); if (isOutsideExportClick(recentWrap, event.target)) closeRecentMenu(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") { const menu = document.querySelector("#viewerExportMenu"); if (menu) menu.hidden = true; document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false"); closeRecentMenu(); } });
     return { togglePanel: renderPkPanel, showLocateForm, scheduleLoad: scheduleAll, addHistory, showExport: toggleExport, parseText, intervalForZoom, selectedRoadsLayer };
   };
-  window.roadPkTools = { parseText, intervalForZoom, sourceIntervalForZoom, normalRoad, overlaySelection, isOutsideExportClick: (wrap, target) => Boolean(wrap && !wrap.contains(target)) };
+  window.roadPkTools = { parseText, intervalForZoom, sourceIntervalForZoom, normalRoad, overlaySelection, recentLocationKey, rememberRecent, RECENT_LOCATION_MAX, isOutsideExportClick: (wrap, target) => Boolean(wrap && !wrap.contains(target)) };
 })();

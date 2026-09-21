@@ -59,6 +59,60 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("!wrap.contains(target)", script)
         self.assertNotIn("!wrap.contains(event.target) && !menu?.contains", script)
 
+    def test_network_loading_has_no_transient_visible_status(self) -> None:
+        script = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
+        self.assertNotIn("Cargando red", script)
+        self.assertNotIn("Ajustando vista del mapa", script)
+        self.assertIn('setNetworkStatus("No se pudo cargar la red calibrada.", true)', script)
+        self.assertIn("roadsController?.abort()", script)
+        self.assertIn("roadsRequestId", script)
+
+    def test_location_copy_contract_is_shared_and_includes_street_view(self) -> None:
+        viewer = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
+        tools = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
+        self.assertIn("Copiar carretera", viewer)
+        self.assertIn("Copiar PK", viewer)
+        self.assertIn("Copiar coordenadas", viewer)
+        self.assertIn("Street View: ${streetViewUrl(point)}", viewer)
+        self.assertIn("locationCopyActions(item)", tools)
+        self.assertNotIn("data-pk-copy", tools)
+        self.assertNotIn("navigator.clipboard", tools)
+
+    def test_recent_locations_are_mru_bounded_and_separate_from_export_history(self) -> None:
+        script = ROOT / "static" / "js" / "road_pk_tools.js"
+        check = """
+global.window = {};
+require(process.argv[1]);
+const tools = window.roadPkTools;
+let recent = [];
+for (let index = 0; index < 13; index += 1) recent = tools.rememberRecent(recent, { carretera: 'A-1', pk: index, punto: { lat: 40, lon: -3 } });
+recent = tools.rememberRecent(recent, { carretera: 'A 1', pk: 5, punto: { lat: 40, lon: -3 } });
+console.log(JSON.stringify({ max: tools.RECENT_LOCATION_MAX, size: recent.length, first: recent[0], duplicates: recent.filter((item) => tools.recentLocationKey(item) === tools.recentLocationKey({ carretera: 'A-1', pk: 5 })).length }));
+"""
+        completed = subprocess.run(["node", "-e", check, str(script)], capture_output=True, text=True, check=True)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["max"], 12)
+        self.assertEqual(result["size"], 12)
+        self.assertEqual(result["first"]["pk"], 5)
+        self.assertEqual(result["duplicates"], 1)
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("let recentLocations = []", text)
+        self.assertIn("const history = new Map()", text)
+        self.assertIn("addHistory(item); addRecentLocation(item)", text)
+        self.assertNotIn("addRecentLocation(item);", (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8"))
+
+    def test_recent_popover_replays_a_location_and_closes_normally(self) -> None:
+        script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
+        styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("viewerRecentButton", script)
+        self.assertIn("viewerRecentMenu", script)
+        self.assertIn("function replayRecent", script)
+        self.assertIn("locate([{ carretera: item.carretera, pk: item.pk }])", script)
+        self.assertIn("closeRecentMenu()", script)
+        self.assertIn('document.querySelector("#viewerExportButton")?.setAttribute("aria-expanded", "false")', script)
+        self.assertIn(".viewer-recent-wrap", styles)
+        self.assertIn(".viewer-recent-menu", styles)
+
     def test_intervals_match_the_acv_viewer_ladder(self) -> None:
         self.assertEqual(VALID_INTERVALS, {1, 5, 10, 25, 50, 100, 250})
     def test_rotation_column_is_detected_from_configured_candidates(self) -> None:

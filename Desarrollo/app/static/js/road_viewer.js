@@ -51,6 +51,7 @@
   };
   const coordsText = (point) => `${Number(point.lat).toFixed(6)}, ${Number(point.lon).toFixed(6)}`;
   const streetViewUrl = (point) => `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
+  const copiedCoordinates = (point) => `${coordsText(point)}\nStreet View: ${streetViewUrl(point)}`;
 
   function setResult(html = "") {
     resultElement.innerHTML = html;
@@ -104,13 +105,18 @@
     return `${item.carretera} · PK ${pkText(item.pk)}`;
   }
 
+  function locationCopyActions(item) {
+    const point = item.punto;
+    return `<button type="button" class="viewer-copy" data-copy="${escapeHtml(item.carretera)}">Copiar carretera</button><button type="button" class="viewer-copy" data-copy="${escapeHtml(pkText(item.pk))}">Copiar PK</button><button type="button" class="viewer-copy" title="Copia coordenadas y enlace de Street View" data-copy="${escapeHtml(copiedCoordinates(point))}">Copiar coordenadas</button>`;
+  }
+
   function resultCard(item) {
     const point = item.punto;
     const roadPk = roadPkLabel(item);
     const coordinates = coordsText(point);
     return `<div class="viewer-card">
-      <div class="viewer-card-row"><strong>${escapeHtml(roadPk)}</strong><button type="button" class="viewer-copy" aria-label="Copiar carretera y PK" data-copy="${escapeHtml(roadPk)}">copiar</button></div>
-      <div class="viewer-card-row"><a href="${streetViewUrl(point)}" target="_blank" rel="noopener noreferrer">${escapeHtml(coordinates)} ↗</a><button type="button" class="viewer-copy" aria-label="Copiar coordenadas" data-copy="${escapeHtml(coordinates)}">copiar</button></div>
+      <div class="viewer-card-row"><strong>${escapeHtml(roadPk)}</strong><span class="viewer-copy-actions">${locationCopyActions(item)}</span></div>
+      <div class="viewer-card-row"><a href="${streetViewUrl(point)}" target="_blank" rel="noopener noreferrer">${escapeHtml(coordinates)} ↗</a></div>
       <div class="viewer-actions"><button type="button" class="ghost" data-zoom data-lat="${point.lat}" data-lon="${point.lon}">Zoom</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="inicio">Usar como PK inicio</button><button type="button" class="ghost" data-use-pk="${item.pk}" data-use-pk-target="fin">Usar como PK fin</button><button type="button" class="ghost" data-clear-interaction>Borrar marcador</button></div>
     </div>`;
   }
@@ -278,7 +284,7 @@
     }
     const bounds = map.getBounds();
     if (!bounds.isValid()) {
-      setNetworkStatus("Ajustando vista del mapa…");
+      console.debug("Bounds Leaflet aún no válidos; se reintentará la carga de red.");
       if (invalidBoundsRetries < 2) {
         invalidBoundsRetries += 1;
         invalidateMapSize();
@@ -289,13 +295,11 @@
     const bboxValues = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
     if (!bboxValues.every(Number.isFinite) || bboxValues[0] >= bboxValues[2] || bboxValues[1] >= bboxValues[3]) {
       console.warn("BBOX Leaflet no válida; se omite la carga de red.", bboxValues);
-      setNetworkStatus("Ajustando vista del mapa…");
       return;
     }
     const bbox = bboxValues.join(",");
     invalidBoundsRetries = 0;
     roadsController = new AbortController();
-    setNetworkStatus("Cargando red…");
     try {
       const response = await fetch(`/api/visor/vias?${new URLSearchParams({ bbox })}`, { signal: roadsController.signal });
       const data = await response.json();
@@ -306,7 +310,7 @@
       L.geoJSON(data, { style: roadStyle("casing") }).addTo(roadsLayer);
       L.geoJSON(data, { style: roadStyle("interior") }).addTo(roadsLayer);
       L.geoJSON(data, { filter: (feature) => Boolean(feature.properties?.autovia), style: roadStyle("center") }).addTo(roadsLayer);
-      setNetworkStatus(data.features?.length ? "" : "No hay vías calibradas visibles en este ámbito.");
+      setNetworkStatus("");
     } catch (error) {
       if (error.name === "AbortError" || requestId !== roadsRequestId) return;
       console.warn("No se pudo cargar la red calibrada.", { bbox, error });
@@ -386,7 +390,7 @@
     map.createPane("roadInteractionPane").style.zIndex = 460;
     roadsLayer = L.layerGroup().addTo(map);
     measureLayer = L.layerGroup().addTo(map);
-    pkTools = window.createRoadPkTools?.({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, usePk: async (road, pk, target) => window.setRoadFromViewer?.(road, target === "inicio" ? pk : null, target === "fin" ? pk : null), showNotice: showViewerNotice }) || null;
+    pkTools = window.createRoadPkTools?.({ map, formElement, setResult, escapeHtml, drawPoint, clearInteractionGraphics, focusMapPoint, locationCopyActions, usePk: async (road, pk, target) => window.setRoadFromViewer?.(road, target === "inicio" ? pk : null, target === "fin" ? pk : null), showNotice: showViewerNotice }) || null;
     L.control.layers({ "Callejero gris": grey, Ortofoto: photo }, { "Red calibrada": roadsLayer }, { collapsed: true }).addTo(map);
     L.control.scale({ position: "bottomleft", metric: true, imperial: false, maxWidth: 180 }).addTo(map);
     map.on("moveend", () => { scheduleRoadLoad(); pkTools?.scheduleLoad(); });
