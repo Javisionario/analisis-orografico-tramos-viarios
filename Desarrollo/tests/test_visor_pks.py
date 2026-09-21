@@ -37,8 +37,10 @@ class ViewerPkTests(unittest.TestCase):
         self.assertNotIn("Acércate para mostrar la red calibrada.", script)
 
     def test_segment_autocomplete_uses_one_selection_path_and_roles(self) -> None:
-        script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        app_script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        script = (ROOT / "static" / "js" / "segments.js").read_text(encoding="utf-8")
         dynamic_markup = script[script.index("function segmentMarkup"):script.index("function addSegment")]
+        self.assertIn("createAnalysisSegments", app_script)
         self.assertEqual(script.count('button.addEventListener("click", () => selectSegmentRoad(segment, item))'), 1)
         self.assertNotIn("setTimeout(() => { segment.querySelector('[data-role=\"suggestions\"]')", script)
         self.assertIn("document.addEventListener(\"pointerdown\"", script)
@@ -81,13 +83,14 @@ class ViewerPkTests(unittest.TestCase):
         self.assertNotIn("form.reset()", script)
 
     def test_frontend_escapes_dynamic_status_and_autocomplete_content(self) -> None:
-        script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("function escapeHtml(value)", script)
-        self.assertIn("heading.textContent = title", script)
-        self.assertIn("paragraph.textContent = text", script)
-        self.assertIn("road.textContent = item.carretera", script)
-        self.assertIn("if (roadLoading === loading) roadLoading = null", script)
-        self.assertIn("safeOutputUrl", script)
+        app_script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        segment_script = (ROOT / "static" / "js" / "segments.js").read_text(encoding="utf-8")
+        self.assertIn("function escapeHtml(value)", app_script)
+        self.assertIn("heading.textContent = title", app_script)
+        self.assertIn("paragraph.textContent = text", app_script)
+        self.assertIn("road.textContent = item.carretera", segment_script)
+        self.assertIn("if (roadLoading === loading) roadLoading = null", segment_script)
+        self.assertIn("safeOutputUrl", app_script)
 
     def test_export_popover_only_closes_outside_its_wrapper(self) -> None:
         script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
