@@ -31,6 +31,27 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("viewerMapHeight(window.innerHeight, rect.top)", script)
         self.assertIn("Math.max(min, Math.min(max", script)
         self.assertIn("resizeViewerMapToViewport", script)
+        self.assertIn("MAP_MAX_HEIGHT = 960", script)
+        self.assertIn("availableHeight", script)
+        self.assertIn("bottomGap", script)
+        self.assertNotIn("Acércate para mostrar la red calibrada.", script)
+
+    def test_segment_autocomplete_selects_before_focusout_and_stays_role_based(self) -> None:
+        script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        dynamic_markup = script[script.index("function segmentMarkup"):script.index("function addSegment")]
+        self.assertIn('button.addEventListener("pointerdown"', script)
+        self.assertIn("event.preventDefault();", script)
+        self.assertIn("selectSegmentRoad(segment, item);", script)
+        self.assertIn('data-role="road"', dynamic_markup)
+        self.assertNotIn('id="carretera"', dynamic_markup)
+
+    def test_viewer_results_navigation_reuses_the_existing_viewer(self) -> None:
+        app_script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        viewer_script = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
+        self.assertIn('window.showViewerResults = () => showRightPanel("results")', app_script)
+        self.assertIn('window.showRoadViewer = () => showRightPanel("viewer")', app_script)
+        self.assertIn('show() { requestAnimationFrame(() => requestAnimationFrame(invalidateMapSize)); }', viewer_script)
+        self.assertEqual(viewer_script.count("applyNetworkBounds();"), 1)
 
     def test_export_popover_only_closes_outside_its_wrapper(self) -> None:
         script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")

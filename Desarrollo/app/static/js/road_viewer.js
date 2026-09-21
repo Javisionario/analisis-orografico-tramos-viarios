@@ -5,7 +5,7 @@
   const ROAD_LAYER_MIN_ZOOM = 10;
   const MAP_BOTTOM_MARGIN = 20;
   const MAP_MIN_HEIGHT = 380;
-  const MAP_MAX_HEIGHT = 700;
+  const MAP_MAX_HEIGHT = 960;
   const SNAP_TOLERANCE_PX = 40;
   const MAX_SNAP_TOLERANCE_M = 500;
   const INTERACTION_STYLES = {
@@ -273,7 +273,7 @@
     roadsController?.abort();
     if (map.getZoom() < ROAD_LAYER_MIN_ZOOM) {
       roadsLayer.clearLayers();
-      setNetworkStatus("Acércate para mostrar la red calibrada.");
+      setNetworkStatus("");
       return;
     }
     const bounds = map.getBounds();
@@ -323,6 +323,15 @@
     const rect = mapElement.getBoundingClientRect();
     const height = viewerMapHeight(window.innerHeight, rect.top);
     mapElement.style.height = `${height}px`;
+    const mapBottom = Math.round(rect.top + height);
+    console.debug("Viewer map sizing", {
+      viewportHeight: window.innerHeight,
+      mapTop: Math.round(rect.top),
+      availableHeight: Math.round(window.innerHeight - rect.top - MAP_BOTTOM_MARGIN),
+      appliedHeight: height,
+      mapBottom,
+      bottomGap: Math.round(window.innerHeight - mapBottom),
+    });
     return height;
   }
 
@@ -389,7 +398,7 @@
       if (button.dataset.viewerTool === "pks") pkTools?.togglePanel();
     }));
     document.querySelector("#viewerExportButton")?.addEventListener("click", () => pkTools?.showExport());
-    setNetworkStatus("Acércate para mostrar la red calibrada.");
+    setNetworkStatus("");
     if (window.ResizeObserver) {
       const observer = new ResizeObserver(() => invalidateMapSize());
       [formElement, resultElement, noticeElement, networkStatus].filter(Boolean).forEach((element) => observer.observe(element));

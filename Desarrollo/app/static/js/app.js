@@ -399,6 +399,12 @@ function renderSuggestions(segment, items, q) {
     button.type = "button";
     button.className = "suggestion";
     button.innerHTML = `<strong>${item.carretera}</strong><span>${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}</span>`;
+    // Select on pointerdown, before the input's focusout timeout can hide an
+    // overlay that is clipped or delayed by the sticky sidebar scroll area.
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      selectSegmentRoad(segment, item);
+    });
     button.addEventListener("click", () => selectSegmentRoad(segment, item));
     suggestions.appendChild(button);
   }
