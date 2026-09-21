@@ -68,7 +68,7 @@ if not "%REQUIREMENTS_HASH%"=="%INSTALLED_REQUIREMENTS_HASH%" (
   > "%REQUIREMENTS_HASH_FILE%" echo %REQUIREMENTS_HASH%
 )
 
-echo Herramienta de Analisis Orografico de Tramos Viarios
+echo Orografia y Localizacion de Tramos Viarios
 echo URL local: http://127.0.0.1:8025
 echo Iniciando la aplicacion...
 start "" "http://127.0.0.1:8025"

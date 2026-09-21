@@ -86,16 +86,39 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("roadsController?.abort()", script)
         self.assertIn("roadsRequestId", script)
 
-    def test_location_copy_contract_is_shared_and_includes_street_view(self) -> None:
+    def test_location_copy_contract_uses_rich_street_view_link_when_available(self) -> None:
         viewer = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
         tools = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
         self.assertIn("Copiar carretera", viewer)
         self.assertIn("Copiar PK", viewer)
         self.assertIn("Copiar coordenadas", viewer)
-        self.assertIn("Street View: ${streetViewUrl(point)}", viewer)
+        self.assertIn("data-copy-coordinates", viewer)
+        self.assertIn("function copyCoordinates", viewer)
+        self.assertIn("new ClipboardItem", viewer)
+        self.assertIn('"text/html"', viewer)
+        self.assertIn('`<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`', viewer)
+        self.assertIn('const coordsText = (point) => `${Number(point.lat).toFixed(6)},${Number(point.lon).toFixed(6)}`', viewer)
+        self.assertNotIn("Street View:", viewer)
         self.assertIn("locationCopyActions(item)", tools)
         self.assertNotIn("data-pk-copy", tools)
         self.assertNotIn("navigator.clipboard", tools)
+
+    def test_clearing_an_interaction_also_clears_its_result_card(self) -> None:
+        viewer = (ROOT / "static" / "js" / "road_viewer.js").read_text(encoding="utf-8")
+        self.assertIn('button.addEventListener("click", clearInteractionResult)', viewer)
+        self.assertIn("function clearInteractionResult()", viewer)
+        clear_block = viewer[viewer.index("function clearInteractionResult()"):viewer.index("function clearInteractionResult()") + 140]
+        self.assertIn("clearInteractionGraphics(true)", clear_block)
+        self.assertIn('setResult("")', clear_block)
+
+    def test_visible_product_name_uses_the_current_scope(self) -> None:
+        product_name = "Orografía y Localización de Tramos Viarios"
+        self.assertIn(product_name, (ROOT / "templates" / "index.html").read_text(encoding="utf-8"))
+        readme = (ROOT.parent.parent / "README.md").read_text(encoding="utf-8")
+        self.assertIn(product_name, readme)
+        self.assertNotIn("header_analisis_orografico.webp", readme)
+        self.assertIn(product_name, (ROOT.parent.parent / "docs" / "DOCUMENTACION_TECNICA.md").read_text(encoding="utf-8"))
+        self.assertIn("Orografia y Localizacion de Tramos Viarios", (ROOT.parent.parent / "iniciar_analisis_orografico_tramos_viarios.bat").read_text(encoding="utf-8"))
 
     def test_recent_locations_are_mru_bounded_and_separate_from_export_history(self) -> None:
         script = ROOT / "static" / "js" / "road_pk_tools.js"

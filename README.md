@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="docs/images/header_analisis_orografico.webp" alt="Herramienta de Análisis Orográfico de Tramos Viarios">
-</p>
-
-# Herramienta de Análisis Orográfico de Tramos Viarios
+# Orografía y Localización de Tramos Viarios
 
 Aplicación web local para analizar la orografía de un tramo de carretera a partir de su trazado y de un modelo digital del terreno.
 

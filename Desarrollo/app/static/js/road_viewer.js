@@ -49,21 +49,21 @@
     const metres = Math.round(Number(pk) * 1000);
     return `${Math.floor(metres / 1000)}+${String(Math.abs(metres % 1000)).padStart(3, "0")}`;
   };
-  const coordsText = (point) => `${Number(point.lat).toFixed(6)}, ${Number(point.lon).toFixed(6)}`;
+  const coordsText = (point) => `${Number(point.lat).toFixed(6)},${Number(point.lon).toFixed(6)}`;
   const streetViewUrl = (point) => `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(`${point.lat},${point.lon}`)}`;
-  const copiedCoordinates = (point) => `${coordsText(point)}\nStreet View: ${streetViewUrl(point)}`;
 
   function setResult(html = "") {
     resultElement.innerHTML = html;
     resultElement.hidden = !html;
     resultElement.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copy, button)));
+    resultElement.querySelectorAll("[data-copy-coordinates]").forEach((button) => button.addEventListener("click", () => copyCoordinates({ lat: Number(button.dataset.lat), lon: Number(button.dataset.lon) }, button)));
     resultElement.querySelectorAll("[data-use-pk]").forEach((button) => button.addEventListener("click", () => usePk(button.dataset.usePk, button.dataset.usePkTarget)));
     resultElement.querySelectorAll("[data-zoom]").forEach((button) => button.addEventListener("click", () => {
       focusMapPoint({ lat: Number(button.dataset.lat), lng: Number(button.dataset.lon) });
     }));
     resultElement.querySelectorAll("[data-measure-road]").forEach((button) => button.addEventListener("click", () => requestMeasure(button.dataset.measureRoad)));
     resultElement.querySelectorAll("[data-use-tramo]").forEach((button) => button.addEventListener("click", () => useTramo(button.dataset.road, button.dataset.pk1, button.dataset.pk2)));
-    resultElement.querySelectorAll("[data-clear-interaction]").forEach((button) => button.addEventListener("click", () => clearInteractionGraphics(true)));
+    resultElement.querySelectorAll("[data-clear-interaction]").forEach((button) => button.addEventListener("click", clearInteractionResult));
   }
 
   function setNetworkStatus(message = "", isError = false) {
@@ -80,14 +80,30 @@
     if (message) noticeTimer = setTimeout(() => { noticeElement.hidden = true; }, duration);
   }
 
+  function copyFeedback(button) {
+    const before = button.textContent;
+    button.textContent = "Copiado";
+    setTimeout(() => { button.textContent = before; }, 1200);
+  }
+
   function copyText(value, button) {
-    const done = () => {
-      const before = button.textContent;
-      button.textContent = "Copiado";
-      setTimeout(() => { button.textContent = before; }, 1200);
-    };
+    const done = () => copyFeedback(button);
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value).then(done).catch(() => fallbackCopy(value, done));
     else fallbackCopy(value, done);
+  }
+
+  function copyCoordinates(point, button) {
+    const text = coordsText(point);
+    const href = streetViewUrl(point);
+    const html = `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
+    const fallback = () => copyText(text, button);
+    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined" && typeof Blob !== "undefined") {
+      const payload = new ClipboardItem({
+        "text/plain": new Blob([text], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      });
+      navigator.clipboard.write([payload]).then(() => copyFeedback(button)).catch(fallback);
+    } else fallback();
   }
 
   function fallbackCopy(value, done) {
@@ -107,7 +123,7 @@
 
   function locationCopyActions(item) {
     const point = item.punto;
-    return `<button type="button" class="viewer-copy" data-copy="${escapeHtml(item.carretera)}">Copiar carretera</button><button type="button" class="viewer-copy" data-copy="${escapeHtml(pkText(item.pk))}">Copiar PK</button><button type="button" class="viewer-copy" title="Copia coordenadas y enlace de Street View" data-copy="${escapeHtml(copiedCoordinates(point))}">Copiar coordenadas</button>`;
+    return `<button type="button" class="viewer-copy" data-copy="${escapeHtml(item.carretera)}">Copiar carretera</button><button type="button" class="viewer-copy" data-copy="${escapeHtml(pkText(item.pk))}">Copiar PK</button><button type="button" class="viewer-copy" title="Copia las coordenadas con enlace de Street View" data-copy-coordinates data-lat="${Number(point.lat)}" data-lon="${Number(point.lon)}">Copiar coordenadas</button>`;
   }
 
   function resultCard(item) {
@@ -152,6 +168,11 @@
   function clearInteractionGraphics(resetMeasure = false) {
     measureLayer?.clearLayers();
     if (resetMeasure) measurePoints = [];
+  }
+
+  function clearInteractionResult() {
+    clearInteractionGraphics(true);
+    setResult("");
   }
 
   function showLocateForm() {

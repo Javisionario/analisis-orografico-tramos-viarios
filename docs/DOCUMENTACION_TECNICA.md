@@ -1,6 +1,6 @@
 # Documentación técnica
 
-Esta documentación reúne la información técnica de la **Herramienta de Análisis Orográfico de Tramos Viarios v3.1.1**. El README principal explica el uso habitual; este documento conserva el detalle sobre parámetros, metodología, salidas y composición.
+Esta documentación reúne la información técnica de **Orografía y Localización de Tramos Viarios v3.1.1**. El README principal explica el uso habitual; este documento conserva el detalle sobre parámetros, metodología, salidas y composición.
 
 ## 1. Arquitectura general
 
