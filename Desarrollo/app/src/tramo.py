@@ -203,31 +203,38 @@ def _continuous_route_pieces(
     insufficient to concatenate them: select one deterministic chain and fail
     when the next calibrated part is physically disconnected.
     """
-    route: list[tuple[float, LineString, list[tuple[float, float]]]] = []
-    remaining = list(pieces)
     increasing = sentido != "decreciente"
-    cursor = start_m if increasing else end_m
     target = end_m if increasing else start_m
-    while (cursor < target - tolerance_m) if increasing else (cursor > target + tolerance_m):
+    initial = start_m if increasing else end_m
+
+    def search(
+        cursor: float,
+        previous_end: Point | None,
+        remaining: list[tuple[float, float, tuple[int, str], LineString, list[tuple[float, float]]]],
+    ) -> list[tuple[float, LineString, list[tuple[float, float]]]] | None:
+        if (cursor >= target - tolerance_m) if increasing else (cursor <= target + tolerance_m):
+            return []
         candidates = [
             item for item in remaining
             if (
                 (increasing and item[0] <= cursor + tolerance_m and item[1] > cursor + tolerance_m)
                 or (not increasing and item[0] < cursor - tolerance_m and item[1] >= cursor - tolerance_m)
             )
+            and abs((item[0] if increasing else item[1]) - cursor) <= tolerance_m
         ]
-        if not candidates:
-            raise TramoError("La calibración del tramo no cubre un recorrido continuo.")
-        if route:
-            previous_end = Point(route[-1][1].coords[-1])
-            connected = [item for item in candidates if previous_end.distance(Point(item[3].coords[0])) <= tolerance_m]
-            if not connected:
-                raise TramoError("Las geometrías calibradas del tramo son físicamente discontinuas.")
-            candidates = connected
-        low, high, _priority, part, calibration = min(candidates, key=lambda item: item[2])
-        route.append((low, part, calibration))
-        remaining.remove((low, high, _priority, part, calibration))
-        cursor = high if increasing else low
+        for item in sorted(candidates, key=lambda candidate: candidate[2]):
+            low, high, _priority, part, calibration = item
+            if previous_end is not None and previous_end.distance(Point(part.coords[0])) > tolerance_m:
+                continue
+            next_cursor = high if increasing else low
+            tail = search(next_cursor, Point(part.coords[-1]), [candidate for candidate in remaining if candidate is not item])
+            if tail is not None:
+                return [(low, part, calibration), *tail]
+        return None
+
+    route = search(initial, None, list(pieces))
+    if route is None:
+        raise TramoError("Las geometrías calibradas del tramo no forman una ruta físicamente continua.")
     return route
 
 

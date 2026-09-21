@@ -91,8 +91,33 @@ class MeasuredLinearReferencingTests(unittest.TestCase):
             {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 500, "m_to": 1000, "geometry": LineString([(500, 50), (1000, 50)])},
         ], geometry="geometry", crs="EPSG:25830")
         cols = {"carretera": "ID_ROAD", "sentido": "Via_sentido", "m_inicio": "m_from", "m_fin": "m_to", "tipo_via": None}
-        with self.assertRaisesRegex(ValueError, "físicamente discontinuas"):
+        with self.assertRaisesRegex(ValueError, "ruta físicamente continua"):
             extraer_tramo(source, cols, "A", 0, 1, "creciente")
+
+    def test_tramo_backtracks_from_a_disconnected_parallel_branch(self) -> None:
+        import geopandas as gpd
+
+        source = gpd.GeoDataFrame([
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 0, "m_to": 500, "geometry": LineString([(0, 50), (500, 50)])},
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 0, "m_to": 500, "geometry": LineString([(0, 0), (500, 0)])},
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 500, "m_to": 1000, "geometry": LineString([(500, 0), (1000, 0)])},
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 500, "m_to": 1000, "geometry": LineString([(500, 100), (1000, 100)])},
+        ], geometry="geometry", crs="EPSG:25830")
+        cols = {"carretera": "ID_ROAD", "sentido": "Via_sentido", "m_inicio": "m_from", "m_fin": "m_to", "tipo_via": None}
+        tramo = extraer_tramo(source, cols, "A", 0, 1, "creciente")
+        self.assertAlmostEqual(tramo.longitud_m, 1000.0)
+
+    def test_tramo_rejects_partially_overlapping_m_ranges(self) -> None:
+        import geopandas as gpd
+
+        source = gpd.GeoDataFrame([
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 0, "m_to": 600, "geometry": LineString([(0, 0), (600, 0)])},
+            {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 500, "m_to": 1000, "geometry": LineString([(600, 0), (1100, 0)])},
+        ], geometry="geometry", crs="EPSG:25830")
+        cols = {"carretera": "ID_ROAD", "sentido": "Via_sentido", "m_inicio": "m_from", "m_fin": "m_to", "tipo_via": None}
+        for sentido in ("creciente", "decreciente"):
+            with self.assertRaisesRegex(ValueError, "ruta físicamente continua"):
+                extraer_tramo(source, cols, "A", 0, 1, sentido)
 
     def test_outside_calibration_is_not_silently_clamped(self) -> None:
         with self.assertRaises(ValueError):
