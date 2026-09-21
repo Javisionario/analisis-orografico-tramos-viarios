@@ -87,9 +87,6 @@ const SG_TABLE = {
   9: { window: 41, polyorder: 1, label: "muy alto" },
   10: { window: 51, polyorder: 1, label: "muy suavizado" },
 };
-const CARTO_API_KEY_MASK = "••••••••••••••••";
-let cartoStoredKeyAvailable = false;
-let cartoShowPressed = false;
 
 function setStatus(title, text) {
   statusBox.replaceChildren();
@@ -283,314 +280,42 @@ const segmentList = document.querySelector("#segmentList");
 const addSegmentButton = document.querySelector("#addSegment");
 const multiSegmentWarning = document.querySelector("#multiSegmentWarning");
 const pendingMapCheckbox = document.querySelector('[name="generar_mapa_pendientes"]');
+const controls = window.createAnalysisControls({
+  SG_TABLE,
+  PK_INTERVALS,
+  numberOrNull,
+  elements: {
+    alphaLocalizacion, alphaLocalizacionValue, alphaPendientes, alphaPendientesValue,
+    anomaly, anomalyHelp, anomalyValue, cartoApiKey, cartoApiKeyField,
+    cartoApiKeyStatus, mapaBase, mostrarCartoApiKey, olvidarCartoApiKey,
+    pkAutoHelp, pkEtiquetaCada, pkEtiquetaCadaValue, pkManualControls, pkModo,
+    pkSimboloCada, pkSimboloCadaValue, recordarCartoApiKeyField, resolutionMdt,
+    sample, sampleHelp, sampleValue, sgAdvanced, sgAdvancedControls, sgPolyorder,
+    sgPolyorderValue, sgSlopeAdvanced, sgSlopeAdvancedControls, sgSlopePolyorder,
+    sgSlopePolyorderValue, sgSlopeWindow, sgSlopeWindowValue, sgWindow, sgWindowValue,
+    slopeSmooth, slopeSmoothHelp, slopeSmoothValue, smooth, smoothHelp, smoothValue,
+  },
+});
+const {
+  clearCartoStoredMask, forgetCartoApiKey, hideCartoApiKey, pkSliderValue,
+  restoreCartoStoredMask,
+  setCartoStoredMask, sgPolyorderReal, sgSlopePolyorderReal, showCartoApiKey,
+  updateAdvancedSgHelp, updateAdvancedSgState, updateAdvancedSlopeSgHelp,
+  updateAdvancedSlopeSgState, updateAlphaLabels, updateAnomalyHelp,
+  updateMapBaseControls, updatePkControls, updateSampleHelp, updateSlopeSmoothHelp,
+  updateSmoothHelp,
+} = controls;
 const segmentApi = window.createAnalysisSegments({
   segmentList, addSegmentButton, multiSegmentWarning, pendingMapCheckbox,
   normalizeRoad, normalizedPrefix, numberOrNull, formatPk, setParagraphs,
   setStatus, updateSmoothHelp, updatePkControls,
 });
+const resultsApi = window.createAnalysisResults({
+  addBackToViewerAction, escapeHtml, formatPk, resultsBox, safeOutputUrl,
+  showRightPanel, zipDownloads,
+});
 
 
-function updateSmoothHelp() {
-  const q = Number(smooth.value);
-  const d = Number(sample.value) || 75;
-  const spec = SG_TABLE[q] || SG_TABLE[4];
-  smoothValue.textContent = `${q}/10`;
-  smoothHelp.textContent = q === 0
-    ? "Sin suavizado."
-    : `Suavizado de elevaciones. Ventana: ${spec.window} pts (${Math.round(spec.window * d)} m), polinomio ${spec.polyorder}.`;
-}
-
-function updateSlopeSmoothHelp() {
-  if (!slopeSmooth || !slopeSmoothValue || !slopeSmoothHelp) return;
-  const q = Number(slopeSmooth.value);
-  const d = Number(sample.value) || 75;
-  const spec = SG_TABLE[q] || SG_TABLE[4];
-  slopeSmoothValue.textContent = `${q}/10`;
-  slopeSmoothHelp.textContent = q === 0
-    ? "Sin suavizado de pendientes."
-    : `Suavizado de pendientes. Ventana: ${spec.window} pts (${Math.round(spec.window * d)} m), polinomio ${spec.polyorder}.`;
-}
-
-function updateSampleHelp() {
-  const value = Number(sample.value);
-  sampleValue.textContent = `${value} m`;
-  const selected = resolutionMdt.value;
-  if (selected === "5") {
-    sampleHelp.textContent = value < 20
-      ? "Advertencia: inferior al mínimo recomendado para MDT 5 m."
-      : "Mínimo 4x tamaño del píxel del MDT.";
-  } else if (selected === "25") {
-    if (value < 25) {
-      sampleHelp.textContent = "Advertencia fuerte: intervalo inferior al pixel MDT de 25 m.";
-    } else if (value < 100) {
-      sampleHelp.textContent = "Advertencia: recomendado al menos 100 m para MDT 25 m.";
-    } else {
-      sampleHelp.textContent = "Mínimo 4x tamaño del píxel del MDT.";
-    }
-  } else {
-    sampleHelp.textContent = "Mínimo 4x tamaño del píxel del MDT.";
-  }
-  updateAdvancedSgHelp();
-  updateAdvancedSlopeSgHelp();
-}
-
-function updateAnomalyHelp() {
-  const value = Number(anomaly.value || 20);
-  const label = value.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  anomalyValue.textContent = `${label} %`;
-  anomalyHelp.textContent = `Pendientes con valor superior a ${label} % son omitidas.`;
-}
-
-function updateAlphaLabels() {
-  if (alphaLocalizacion && alphaLocalizacionValue) {
-    alphaLocalizacionValue.textContent = `${Math.round(Number(alphaLocalizacion.value || 0) * 100)} %`;
-  }
-  if (alphaPendientes && alphaPendientesValue) {
-    alphaPendientesValue.textContent = `${Math.round(Number(alphaPendientes.value || 0) * 100)} %`;
-  }
-}
-
-function setCartoControlVisibility(element, visible) {
-  if (!element) return;
-  element.hidden = !visible;
-  element.style.display = visible ? "" : "none";
-}
-
-function setCartoStoredMask() {
-  if (!cartoApiKey || !cartoStoredKeyAvailable || cartoApiKey.value || cartoApiKey.dataset.editing === "true") return;
-  cartoApiKey.value = CARTO_API_KEY_MASK;
-  cartoApiKey.dataset.storedMask = "true";
-}
-
-function clearCartoStoredMask() {
-  if (!cartoApiKey || cartoApiKey.dataset.storedMask !== "true") return;
-  cartoApiKey.value = "";
-  delete cartoApiKey.dataset.storedMask;
-}
-
-function hideCartoApiKey() {
-  cartoShowPressed = false;
-  if (!cartoApiKey) return;
-  cartoApiKey.type = "password";
-  if (cartoApiKey.dataset.revealedStored === "true") {
-    cartoApiKey.value = "";
-    delete cartoApiKey.dataset.revealedStored;
-    setCartoStoredMask();
-  }
-}
-
-async function refreshCartoApiKeyStatus() {
-  if (mapaBase?.value !== "carto_positron") return;
-  try {
-    const response = await fetch("/api/carto-api-key");
-    if (!response.ok) throw new Error("No se pudo consultar el estado de la API key de CARTO.");
-    const data = await response.json();
-    if (mapaBase?.value === "carto_positron") {
-      const stored = data.stored === true;
-      cartoStoredKeyAvailable = stored;
-      setCartoControlVisibility(cartoApiKeyStatus, stored);
-      setCartoControlVisibility(olvidarCartoApiKey, stored);
-      if (stored) {
-        setCartoStoredMask();
-      } else if (cartoApiKey?.dataset.storedMask === "true") {
-        clearCartoStoredMask();
-      }
-    }
-  } catch (_) {
-    cartoStoredKeyAvailable = false;
-    setCartoControlVisibility(cartoApiKeyStatus, false);
-    setCartoControlVisibility(olvidarCartoApiKey, false);
-  }
-}
-
-function updateMapBaseControls() {
-  const isCarto = mapaBase?.value === "carto_positron";
-  setCartoControlVisibility(cartoApiKeyField, isCarto);
-  setCartoControlVisibility(recordarCartoApiKeyField, isCarto);
-  if (cartoApiKey) {
-    cartoApiKey.required = isCarto;
-    if (!isCarto) {
-      hideCartoApiKey();
-      cartoApiKey.value = "";
-      delete cartoApiKey.dataset.storedMask;
-    }
-  }
-  if (!isCarto) {
-    cartoStoredKeyAvailable = false;
-    setCartoControlVisibility(cartoApiKeyStatus, false);
-    setCartoControlVisibility(mostrarCartoApiKey, false);
-    setCartoControlVisibility(olvidarCartoApiKey, false);
-  } else {
-    setCartoControlVisibility(mostrarCartoApiKey, true);
-    refreshCartoApiKeyStatus();
-  }
-}
-
-async function showCartoApiKey() {
-  if (!cartoApiKey || mapaBase?.value !== "carto_positron") return;
-  cartoShowPressed = true;
-  const revealStored = cartoStoredKeyAvailable && (!cartoApiKey.value || cartoApiKey.dataset.storedMask === "true");
-  if (!revealStored) {
-    cartoApiKey.type = "text";
-    return;
-  }
-  try {
-    const response = await fetch("/api/carto-api-key/reveal", { method: "POST", cache: "no-store" });
-    if (!response.ok) return;
-    const data = await response.json();
-    if (!cartoShowPressed || mapaBase?.value !== "carto_positron" || typeof data.api_key !== "string") return;
-    cartoApiKey.value = data.api_key;
-    delete cartoApiKey.dataset.storedMask;
-    cartoApiKey.dataset.revealedStored = "true";
-    cartoApiKey.type = "text";
-  } finally {
-    // La respuesta solo se conserva en el campo mientras el botón permanece pulsado.
-  }
-}
-
-async function forgetCartoApiKey() {
-  if (!cartoStoredKeyAvailable || !window.confirm("¿Olvidar la API key guardada en este equipo?")) return;
-  hideCartoApiKey();
-  try {
-    const response = await fetch("/api/carto-api-key", { method: "DELETE", cache: "no-store" });
-    const data = await response.json();
-    if (!response.ok || data.stored !== false) return;
-    cartoStoredKeyAvailable = false;
-    if (cartoApiKey) {
-      cartoApiKey.value = "";
-      cartoApiKey.type = "password";
-      delete cartoApiKey.dataset.storedMask;
-    }
-    setCartoControlVisibility(cartoApiKeyStatus, false);
-    setCartoControlVisibility(olvidarCartoApiKey, false);
-  } catch (_) {
-    // Si no se puede borrar, se conserva el estado actual de la interfaz.
-  }
-}
-
-function pkSliderValue(input) {
-  if (!input) return null;
-  const index = Math.max(0, Math.min(PK_INTERVALS.length - 1, Number(input.value || 0)));
-  return PK_INTERVALS[index] || PK_INTERVALS[0];
-}
-
-function setPkSliderToValue(input, value) {
-  if (!input) return;
-  const index = PK_INTERVALS.indexOf(Number(value));
-  input.value = String(index >= 0 ? index : 0);
-}
-
-function updatePkSliderLabels() {
-  const symbol = pkSliderValue(pkSimboloCada);
-  let label = pkSliderValue(pkEtiquetaCada);
-  if (label < symbol) {
-    setPkSliderToValue(pkEtiquetaCada, symbol);
-    label = symbol;
-  }
-  if (pkSimboloCadaValue) pkSimboloCadaValue.textContent = `${symbol} km`;
-  if (pkEtiquetaCadaValue) pkEtiquetaCadaValue.textContent = `${label} km`;
-}
-
-function updatePkControls() {
-  if (!pkModo || !pkManualControls) return;
-  const manual = pkModo.value === "manual";
-  if (pkSimboloCada) pkSimboloCada.disabled = !manual;
-  if (pkEtiquetaCada) pkEtiquetaCada.disabled = !manual;
-  pkManualControls.classList.toggle("is-disabled", !manual);
-  updatePkSliderLabels();
-  if (pkAutoHelp) {
-    pkAutoHelp.textContent = pkModo.value === "automatico"
-      ? `Automático: ${automaticPkText()}`
-      : pkModo.value === "no_mostrar"
-        ? "No se pintarán símbolos ni etiquetas de PK."
-        : "Manual: símbolo y etiqueta se configuran por separado.";
-  }
-}
-
-function automaticPkText() {
-  const start = numberOrNull(document.querySelector("#pkInicio").value);
-  const end = numberOrNull(document.querySelector("#pkFin").value);
-  if (start === null || end === null) return "símbolo y etiqueta según longitud del tramo.";
-  const length = Math.abs(end - start);
-  let symbol = 50;
-  let label = 100;
-  if (length <= 10) [symbol, label] = [1, 1];
-  else if (length <= 30) [symbol, label] = [1, 5];
-  else if (length <= 80) [symbol, label] = [5, 10];
-  else if (length <= 150) [symbol, label] = [10, 25];
-  else if (length <= 300) [symbol, label] = [25, 50];
-  return `símbolo cada ${symbol} km · etiqueta cada ${label} km.`;
-}
-
-function updateAdvancedSgHelp() {
-  if (!sgWindow || !sgWindowValue || !sgPolyorder || !sgPolyorderValue) return;
-  const windowPoints = Number(sgWindow.value || 9);
-  const d = Number(sample.value) || 75;
-  const maxPoly = Math.max(1, Math.min(4, windowPoints - 1));
-  let visual = Number(sgPolyorder.value || 3);
-  let poly = 5 - visual;
-  if (poly > maxPoly) {
-    poly = maxPoly;
-    sgPolyorder.value = String(5 - poly);
-  }
-  if (poly >= windowPoints) {
-    poly = Math.max(1, windowPoints - 1);
-    visual = 5 - poly;
-    sgPolyorder.value = String(visual);
-  }
-  sgWindowValue.textContent = `${windowPoints} puntos · ${Math.round(windowPoints * d)} m`;
-  sgPolyorderValue.textContent = `Polinomio ${poly}`;
-}
-
-function sgPolyorderReal() {
-  if (!sgPolyorder) return null;
-  return 5 - Number(sgPolyorder.value || 3);
-}
-
-function sgSlopePolyorderReal() {
-  if (!sgSlopePolyorder) return null;
-  return 5 - Number(sgSlopePolyorder.value || 3);
-}
-
-function updateAdvancedSgState() {
-  if (!sgAdvanced || !sgAdvancedControls || !smooth) return;
-  const enabled = sgAdvanced.checked;
-  smooth.disabled = enabled;
-  sgAdvancedControls.classList.toggle("is-disabled", !enabled);
-  if (sgWindow) sgWindow.disabled = !enabled;
-  if (sgPolyorder) sgPolyorder.disabled = !enabled;
-  updateAdvancedSgHelp();
-}
-
-function updateAdvancedSlopeSgHelp() {
-  if (!sgSlopeWindow || !sgSlopeWindowValue || !sgSlopePolyorder || !sgSlopePolyorderValue) return;
-  const windowPoints = Number(sgSlopeWindow.value || 13);
-  const d = Number(sample.value) || 75;
-  const maxPoly = Math.max(1, Math.min(4, windowPoints - 1));
-  let visual = Number(sgSlopePolyorder.value || 3);
-  let poly = 5 - visual;
-  if (poly > maxPoly) {
-    poly = maxPoly;
-    sgSlopePolyorder.value = String(5 - poly);
-  }
-  if (poly >= windowPoints) {
-    poly = Math.max(1, windowPoints - 1);
-    visual = 5 - poly;
-    sgSlopePolyorder.value = String(visual);
-  }
-  sgSlopeWindowValue.textContent = `${windowPoints} puntos · ${Math.round(windowPoints * d)} m`;
-  sgSlopePolyorderValue.textContent = `Polinomio ${poly}`;
-}
-
-function updateAdvancedSlopeSgState() {
-  if (!sgSlopeAdvanced || !sgSlopeAdvancedControls || !slopeSmooth) return;
-  const enabled = sgSlopeAdvanced.checked;
-  slopeSmooth.disabled = enabled;
-  sgSlopeAdvancedControls.classList.toggle("is-disabled", !enabled);
-  if (sgSlopeWindow) sgSlopeWindow.disabled = !enabled;
-  if (sgSlopePolyorder) sgSlopePolyorder.disabled = !enabled;
-  updateAdvancedSlopeSgHelp();
-}
 
 function payloadFromForm() {
   const data = new FormData(form);
@@ -656,174 +381,6 @@ function payloadFromForm() {
   };
 }
 
-function fileKind(item) {
-  const name = item.name.toLowerCase();
-  if (name.endsWith(".zip")) return "zip";
-  if (name.startsWith("mapa_") && name.endsWith(".png")) return "mapas";
-  if (name.startsWith("perfil_longitudinal") && name.endsWith(".png")) return "perfiles";
-  return "datos";
-}
-
-function accordion(title, html, open = false) {
-  return `<details ${open ? "open" : ""}><summary>${title}</summary><div class="accordion-body">${html}</div></details>`;
-}
-
-function previewImages(items) {
-  if (!items.length) return "<p class='empty'>Sin previsualizaciones PNG.</p>";
-  return items.map((item) => `
-    <figure class="preview">
-      <img src="${escapeHtml(safeOutputUrl(item.url))}" loading="lazy" alt="${escapeHtml(item.name)}">
-      <figcaption><a href="${escapeHtml(safeOutputUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name)}</a></figcaption>
-    </figure>
-  `).join("");
-}
-
-function dataLinks(items) {
-  if (!items.length) return "<p class='empty'>Sin datos auxiliares.</p>";
-  return items.map((item) => `<a href="${escapeHtml(safeOutputUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name)}</a>`).join("");
-}
-
-function numberText(value, suffix = "", digits = 1) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "Sin dato";
-  return `${n.toLocaleString("es-ES", { maximumFractionDigits: digits, minimumFractionDigits: digits })}${suffix}`;
-}
-
-function pkText(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? formatPk(n) : "Sin dato";
-}
-
-function metric(label, value) {
-  return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
-}
-
-function renderAnomalyRanges(anomalias) {
-  const ranges = anomalias.detalle_rangos_anomalos || [];
-  if (!ranges.length) return "<p class='summary-muted'>Sin pendientes aplanadas.</p>";
-  const rows = ranges.map((item) => `
-    <li>
-      <span>PK ${pkText(item.pk_inicio)} a PK ${pkText(item.pk_fin)} · ${Number(item.n_puntos_muestreo || 0)} puntos · ${Number(item.n_segmentos_mapa || 0)} segmentos · máx. suavizada ${numberText(item.pendiente_suavizada_max_pct ?? item.pendiente_bruta_max_pct, " %", 1)} en PK ${pkText(item.pk_pendiente_suavizada_max ?? item.pk_pendiente_bruta_max)}</span>
-    </li>
-  `).join("");
-  return `
-    <div class="anomaly-ranges">
-      <h4>Pendientes aplanadas</h4>
-      <ul>${rows}</ul>
-    </div>
-  `;
-}
-
-function smoothParamText(params, prefix, legacy = false) {
-  const mode = params[`${prefix}_modo`] || (legacy ? params.suavizado_modo : "simple");
-  if (mode === "avanzado") {
-    const windowPoints = params[`sg_${prefix.replace("suavizado_", "")}_window_puntos`] || (legacy ? params.sg_window_puntos : "?");
-    const polyorder = params[`sg_${prefix.replace("suavizado_", "")}_polyorder`] || (legacy ? params.sg_polyorder : "?");
-    return `Avanzado · ${windowPoints} puntos · polinomio ${polyorder}`;
-  }
-  return `${params[prefix] ?? (legacy ? params.suavizado : 4) ?? 4}/10`;
-}
-
-function renderSummaryCard(data) {
-  const meta = data.metadata || {};
-  const scopes = meta.scopes?.length ? meta.scopes : [{}];
-  const params = meta.parametros || {};
-  const alt = meta.altimetria || scopes[0]?.altimetria || {};
-  const mdt = meta.mdt || {};
-  const usedResolution = alt.resolucion_mdt_usada ?? mdt.resolucion_m ?? mdt.resolucion_usada;
-  const paramsHtml = `
-    <section class="summary-card compact">
-      <div>
-        <h3>Parámetros empleados</h3>
-        <p>Configuración usada en esta generación.</p>
-      </div>
-      <div class="metrics-grid">
-        ${metric("Suavizado de elevaciones", smoothParamText(params, "suavizado_elevaciones", true))}
-        ${metric("Suavizado de pendientes", smoothParamText(params, "suavizado_pendientes"))}
-        ${metric("Muestreo altimétrico", numberText(params.intervalo_muestreo_m ?? 75, " m", 0))}
-        ${metric("Segmento pendiente", params.longitud_intervalo_pendiente_m ? numberText(params.longitud_intervalo_pendiente_m, " m", 0) : "Auto")}
-        ${metric("Umbral de anomalía", numberText(params.umbral_pendiente_anomala_pct ?? 20, " %", 1))}
-        ${metric("Fuente altimétrica usada", alt.fuente_altimetrica_usada_label || "Sin dato")}
-        ${metric("Resolución MDT solicitada", `${alt.resolucion_mdt_solicitada ?? params.resolucion_mdt ?? "5"} m`)}
-        ${metric("Resolución MDT usada", usedResolution ? `${usedResolution} m` : "No disponible")}
-        ${metric("Estado MDT", alt.estado_mdt || (mdt.path ? "Disponible" : "No disponible"))}
-      </div>
-    </section>
-  `;
-  const scopesHtml = scopes.map((scope) => {
-    const tramo = scope.tramo || {};
-    const perfil = scope.perfil || {};
-    const anomalias = scope.anomalias || perfil.anomalias || {};
-    return `
-      <section class="summary-card">
-        <div>
-          <h3>Resumen del tramo</h3>
-          <p>${escapeHtml(tramo.carretera || params.carretera || "")} · ${escapeHtml(tramo.sentido || params.sentido || "")}</p>
-        </div>
-        <div class="metrics-grid">
-          ${metric("Vía", tramo.carretera || params.carretera || "Sin dato")}
-          ${metric("Sentido", tramo.sentido || params.sentido || "Sin dato")}
-          ${metric("PK inicio", pkText(tramo.pk_inicio))}
-          ${metric("PK fin", pkText(tramo.pk_fin))}
-          ${metric("Longitud", numberText(tramo.longitud_m, " m", 0))}
-          ${metric("Rango altitudinal", numberText(perfil.rango_altitudinal_m, " m", 1))}
-          ${metric("Altitud mínima", `${numberText(perfil.altitud_min_m, " m", 1)} · PK ${pkText(perfil.altitud_min_pk)}`)}
-          ${metric("Altitud máxima", `${numberText(perfil.altitud_max_m, " m", 1)} · PK ${pkText(perfil.altitud_max_pk)}`)}
-          ${metric("Pendiente máxima", `${numberText(perfil.pendiente_max_pct, " %", 1)} · PK ${pkText(perfil.pendiente_max_pk)}`)}
-          ${metric("Pendiente mínima", `${numberText(perfil.pendiente_min_pct, " %", 1)} · PK ${pkText(perfil.pendiente_min_pk)}`)}
-          ${metric("Pendiente media", numberText(perfil.pendiente_media_pct, " %", 1))}
-          ${metric("Pendiente media absoluta", numberText(perfil.pendiente_media_abs_pct, " %", 1))}
-        </div>
-        ${renderAnomalyRanges(anomalias)}
-      </section>
-    `;
-  }).join("");
-  return scopesHtml + paramsHtml;
-}
-
-function renderZipButtons(zipDownloadsData) {
-  zipDownloads.innerHTML = "";
-  const entries = [
-    ["mapas", "Descargar mapas"],
-    ["perfiles", "Descargar perfiles"],
-    ["datos", "Descargar datos auxiliares"],
-  ];
-  for (const [key, label] of entries) {
-    const item = zipDownloadsData?.[key];
-    if (!item) continue;
-    const link = document.createElement("a");
-    link.href = safeOutputUrl(item.url);
-    link.textContent = label;
-    link.className = "zip-button";
-    zipDownloads.appendChild(link);
-  }
-}
-
-function renderResults(data) {
-  const downloads = data.downloads || [];
-  const mapImages = downloads.filter((item) => fileKind(item) === "mapas");
-  const profileImages = downloads.filter((item) => fileKind(item) === "perfiles");
-  const profilesWithSlope = profileImages.filter((item) => item.name.toLowerCase().includes("_con_pendiente"));
-  const profilesWithoutSlope = profileImages.filter((item) => item.name.toLowerCase().includes("_sin_pendiente"));
-  const otherProfiles = profileImages.filter((item) => !profilesWithSlope.includes(item) && !profilesWithoutSlope.includes(item));
-  const dataItems = downloads.filter((item) => fileKind(item) === "datos");
-  const info = `
-    <div class="run-info">
-      <strong>Proceso completado</strong>
-      <span>Salida: ${escapeHtml(data.job_id)}</span>
-    </div>
-  `;
-  resultsBox.innerHTML = info
-    + renderSummaryCard(data)
-    + accordion("Mapas generados", previewImages(mapImages), true)
-    + accordion("Perfil longitudinal con pendiente", previewImages(profilesWithSlope.length ? profilesWithSlope : otherProfiles), true)
-    + accordion("Perfil longitudinal sin pendiente", previewImages(profilesWithoutSlope), false)
-    + accordion("Datos auxiliares y metadatos", dataLinks(dataItems), false);
-  renderZipButtons(data.zip_downloads);
-  addBackToViewerAction();
-  window.roadViewer?.setHasResults(true);
-  showRightPanel("results");
-}
 
 if (openHelp) openHelp.addEventListener("click", () => openHelpPanel(null, openHelp));
 if (closeHelp) closeHelp.addEventListener("click", closeHelpPanel);
@@ -884,7 +441,7 @@ if (cartoApiKey) {
   });
   cartoApiKey.addEventListener("blur", () => {
     delete cartoApiKey.dataset.editing;
-    if (!cartoShowPressed) setCartoStoredMask();
+    restoreCartoStoredMask();
   });
 }
 if (mostrarCartoApiKey) {
@@ -945,7 +502,7 @@ form.addEventListener("submit", async (event) => {
     stopLoadingClock();
     lastProgress = null;
     setStatus("Proceso completado", `Salida: ${finalResult.job_id}`);
-    renderResults(finalResult);
+    resultsApi.renderResults(finalResult);
   } catch (error) {
     stopLoadingClock();
     lastProgress = null;
