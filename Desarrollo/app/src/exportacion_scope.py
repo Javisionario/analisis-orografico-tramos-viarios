@@ -260,4 +260,3 @@ def _run_scope(
         "mapas": map_meta,
     }
     return files, meta, warnings
-

@@ -271,4 +271,3 @@ def _create_zip(job_dir: Path, files: list[Path], kind: str, filename: str) -> P
         for path in selected:
             zf.write(path, arcname=path.name)
     return zip_path
-

@@ -651,4 +651,3 @@ def bounds_mapa_principal_multitramo_lonlat(tramos: list[TramoExtraido]) -> tupl
     lat_max = max(geometry.bounds[3] for geometry in geometries)
     # Reutiliza el mismo margen proporcionado del caso single sobre la unión.
     return fit_bounds_to_clip(_expanded_lonlat_bounds(box(lon_min, lat_min, lon_max, lat_max)), MAP_MAIN)
-
