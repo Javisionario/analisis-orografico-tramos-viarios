@@ -72,6 +72,14 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn('show() { requestAnimationFrame(() => requestAnimationFrame(invalidateMapSize)); }', viewer_script)
         self.assertEqual(viewer_script.count("applyNetworkBounds();"), 1)
 
+    def test_generation_error_offers_a_non_destructive_return_to_viewer(self) -> None:
+        script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function setGenerationError(message)", script)
+        self.assertIn('button.textContent = "Volver al visor"', script)
+        self.assertIn('button.addEventListener("click", () => showRightPanel("viewer"))', script)
+        self.assertIn("setGenerationError(String(error.message || error))", script)
+        self.assertNotIn("form.reset()", script)
+
     def test_export_popover_only_closes_outside_its_wrapper(self) -> None:
         script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
         self.assertIn("isOutsideExportClick(wrap, event.target)", script)

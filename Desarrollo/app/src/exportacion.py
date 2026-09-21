@@ -529,6 +529,14 @@ def _run_scope(
     return files, meta, warnings
 
 
+def _single_scope_failure_message(sentido_solicitado: str, errors: list[str]) -> str:
+    details = list(dict.fromkeys(errors))
+    if str(sentido_solicitado).strip().lower() == "ambos":
+        return "No se pudo generar ningún sentido para el tramo solicitado.\n" + "\n".join(f"- {item}" for item in details)
+    cause = details[0] if details else "No se pudo determinar la causa."
+    return f"No se pudo generar el tramo solicitado.\nCausa:\n{cause}"
+
+
 def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dict[str, Any]:
     config = load_config()
     _progress(progress, 1, "Preparando el tramo de estudio.")
@@ -743,11 +751,10 @@ def _generar_outputs_single(params: dict[str, Any], progress: Any = None) -> dic
                 metadata.setdefault("altimetria_por_sentido", {})[sentido_item] = scope_meta.get("altimetria", {})
                 metadata["altimetria"] = scope_meta.get("altimetria", {})
             except Exception as exc:
-                msg = f"Sentido {sentido_item}: {exc}"
+                msg = f"{sentido_item.capitalize()}: {exc}"
                 errors.append(msg)
-                warnings.append(msg)
         if not metadata["scopes"]:
-            raise TramoError("No se pudo generar ningun sentido para el tramo solicitado.")
+            raise TramoError(_single_scope_failure_message(sentido_solicitado, errors))
     except Exception as exc:
         errors.append(str(exc))
         metadata["estado"] = "error"

@@ -101,6 +101,22 @@ function setStatus(title, text) {
   statusBox.innerHTML = `<h2>${title}</h2><p>${text}</p>`;
 }
 
+function addBackToViewerAction() {
+  const action = document.createElement("p");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost";
+  button.textContent = "Volver al visor";
+  button.addEventListener("click", () => showRightPanel("viewer"));
+  action.appendChild(button);
+  statusBox.appendChild(action);
+}
+
+function setGenerationError(message) {
+  setStatus("Error", message);
+  addBackToViewerAction();
+}
+
 function showRightPanel(state) {
   const resultsVisible = state !== "viewer";
   rightPanel.classList.toggle("show-results", resultsVisible);
@@ -1168,8 +1184,7 @@ function renderResults(data) {
     + accordion("Perfil longitudinal sin pendiente", previewImages(profilesWithoutSlope), false)
     + accordion("Datos auxiliares y metadatos", dataLinks(dataItems), false);
   renderZipButtons(data.zip_downloads);
-  statusBox.insertAdjacentHTML("beforeend", '<p><button type="button" class="ghost" id="backToViewer">Volver al visor</button></p>');
-  document.querySelector("#backToViewer")?.addEventListener("click", () => showRightPanel("viewer"));
+  addBackToViewerAction();
   window.roadViewer?.setHasResults(true);
   showRightPanel("results");
 }
@@ -1298,7 +1313,7 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     stopLoadingClock();
     lastProgress = null;
-    setStatus("Error", String(error.message || error));
+    setGenerationError(String(error.message || error));
   } finally {
     button.disabled = false;
   }

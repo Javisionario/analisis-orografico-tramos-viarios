@@ -23,6 +23,19 @@ def tramo(road: str, start: float, end: float, x: float = 0.0) -> TramoExtraido:
 
 
 class DivisionContractTests(unittest.TestCase):
+    def test_single_scope_failure_keeps_each_direction_cause(self) -> None:
+        message = exportacion._single_scope_failure_message(
+            "ambos", ["Creciente: M fuera del intervalo calibrado.", "Decreciente: M fuera del intervalo calibrado."],
+        )
+        self.assertIn("No se pudo generar ningún sentido", message)
+        self.assertIn("- Creciente: M fuera del intervalo calibrado.", message)
+        self.assertIn("- Decreciente: M fuera del intervalo calibrado.", message)
+        self.assertEqual(message.count("Creciente: M fuera del intervalo calibrado."), 1)
+
+    def test_single_scope_failure_keeps_the_single_requested_cause(self) -> None:
+        message = exportacion._single_scope_failure_message("creciente", ["Creciente: M fuera del intervalo calibrado."])
+        self.assertEqual(message, "No se pudo generar el tramo solicitado.\nCausa:\nCreciente: M fuera del intervalo calibrado.")
+
     def test_legacy_single_request_is_valid(self) -> None:
         request = web_app.GenerarRequest(carretera="A-1", pk_inicio=1.0, pk_fin=2.0)
         self.assertIsNone(request.tramos)

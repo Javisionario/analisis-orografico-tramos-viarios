@@ -46,6 +46,16 @@ class DividedProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "M fuera del intervalo calibrado"):
             distance_at_m(tramo.calibracion_distancia_m, 70000.0)
 
+    def test_profile_ticks_ignore_an_interior_calibration_overshoot(self) -> None:
+        tramo = TramoExtraido(
+            "AP-6", "creciente", 43.020, 69.648, 43.020, 69.648, 43.020, 69.648, 200.0,
+            LineString([(0, 0), (200, 0)]), "EPSG:25830", [], {}, [(0.0, 43020.0), (100.0, 70000.0), (200.0, 69648.0)],
+        )
+        ticks = _profile_tick_pks(tramo, np.array([43.020, 69.648]))
+        self.assertEqual(ticks, [45.0, 50.0, 55.0, 60.0, 65.0])
+        for tick in ticks:
+            self.assertIsInstance(distance_at_m(tramo.calibracion_distancia_m, tick * 1000.0), float)
+
     def test_pk_tick_uses_measured_distance_not_global_fraction(self) -> None:
         distances = np.array([0.0, 100.0, 1000.0])
         pks = np.array([0.0, 0.9, 1.0])
