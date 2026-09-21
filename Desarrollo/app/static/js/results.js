@@ -179,4 +179,3 @@ function renderResults(data) {
     return { renderResults };
   };
 }());
-
