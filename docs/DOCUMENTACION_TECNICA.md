@@ -62,6 +62,9 @@ URL local habitual:
 http://127.0.0.1:8025/
 ```
 
+El servidor se limita a loopback por defecto. Para usar un host remoto debe
+activarse explícitamente `app.allow_remote`; no se ofrece autenticación multiusuario.
+
 ## 3. Configuración
 
 Archivo principal:
@@ -94,6 +97,19 @@ La configuración admite listas de nombres alternativos para varios campos, entr
 - tipo de vía.
 
 Esto permite adaptar la herramienta a esquemas de datos distintos sin modificar directamente el código.
+
+## Referenciación lineal y perfiles
+
+La fuente preferente de PK es la coordenada M original de `LineStringM`. Cuando
+el lector GIS no la conserva, se recupera desde WKB/FID del GeoPackage; si no es
+posible, el fallback por límites de fila queda marcado explícitamente. El eje X
+del perfil es siempre distancia geométrica física, mientras que el PK procede de
+M. Por ello el soporte completo requiere un GeoPackage calibrado. Las rutas
+paralelas se resuelven como una única cadena continua; una discontinuidad física
+se rechaza antes de calcular perfiles o pendientes.
+
+La canalización single y multi sigue separada por seguridad de regresión; su
+unificación por scope queda como deuda técnica posterior.
 
 ### CRS
 

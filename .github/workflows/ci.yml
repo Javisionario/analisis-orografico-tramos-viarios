@@ -19,4 +19,5 @@ jobs:
       - run: python -m compileall -q Desarrollo/app Desarrollo/tests
       - run: node --check Desarrollo/app/static/js/app.js
       - run: node --check Desarrollo/app/static/js/road_viewer.js
+      - run: node --check Desarrollo/app/static/js/road_pk_tools.js
       - run: python -m unittest discover -s Desarrollo/tests -v
