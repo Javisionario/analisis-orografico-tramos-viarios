@@ -71,6 +71,13 @@ class DividedProfileTests(unittest.TestCase):
         np.testing.assert_array_equal(plotted[0], np.array([0.0, 100.0, 225.0]))
         self.assertTrue(any(np.isclose(values, 55.5555555556).any() for values in ticks))
 
+    def test_profile_keeps_minor_ticks_and_grid_only_on_y(self) -> None:
+        source = (ROOT / "src" / "perfil_grafico.py").read_text(encoding="utf-8")
+        self.assertNotIn("ax.xaxis.set_minor_locator", source)
+        self.assertIn("ax.yaxis.set_minor_locator(AutoMinorLocator(2))", source)
+        self.assertIn('which="minor", axis="y"', source)
+        self.assertIn('which="major", axis="both"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

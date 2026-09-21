@@ -255,6 +255,7 @@ let activeSegmentId = 1;
 let nextSegmentId = 2;
 let pendingMapBeforeMulti = null;
 const segmentRoads = new Map();
+const segmentSuggestionState = new WeakMap();
 
 function segments() { return [...segmentList.querySelectorAll(".segment-block")]; }
 function updateSegmentLabels() {
@@ -380,33 +381,56 @@ function selectSegmentRoad(segment, item) {
   const message = segment.querySelector('[data-role="road-message"]');
   message.textContent = item.pk_min !== undefined ? `Rango real ${formatPk(item.pk_min)} a ${formatPk(item.pk_max)}` : "";
   message.className = "field-message ok";
-  segment.querySelector('[data-role="suggestions"]').hidden = true;
+  closeSegmentSuggestions(segment);
   segment.querySelector('[data-role="clear-road"]').classList.add("visible");
   validateSegmentPk(segment);
+}
+
+function closeSegmentSuggestions(segment) {
+  const suggestions = segment?.querySelector('[data-role="suggestions"]');
+  const input = segment?.querySelector('[data-role="road"]');
+  if (segment) {
+    const requestId = Number(segment.dataset.suggestionRequest || 0);
+    segment.dataset.suggestionRequest = String(requestId + 1);
+  }
+  if (suggestions) suggestions.hidden = true;
+  if (input) input.setAttribute("aria-expanded", "false");
+  if (segment) segmentSuggestionState.delete(segment);
+}
+
+function updateSuggestionHighlight(segment, index) {
+  const state = segmentSuggestionState.get(segment);
+  if (!state?.items.length) return;
+  state.highlighted = (index + state.items.length) % state.items.length;
+  state.items.forEach((entry, itemIndex) => {
+    entry.button.classList.toggle("is-highlighted", itemIndex === state.highlighted);
+    entry.button.setAttribute("aria-selected", String(itemIndex === state.highlighted));
+  });
 }
 
 function renderSuggestions(segment, items, q) {
   const suggestions = segment.querySelector('[data-role="suggestions"]');
   suggestions.innerHTML = "";
+  suggestions.setAttribute("role", "listbox");
   const shown = items.slice(0, SUGGESTION_LIMIT);
   if (!shown.length) {
     suggestions.innerHTML = `<div class="suggestion-empty">${q ? "No hay coincidencias" : "No hay carreteras disponibles"}</div>`;
     suggestions.hidden = false;
+    segmentSuggestionState.set(segment, { items: [], highlighted: -1 });
+    segment.querySelector('[data-role="road"]').setAttribute("aria-expanded", "true");
     return;
   }
+  const choices = [];
   for (const item of shown) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "suggestion";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", "false");
     button.innerHTML = `<strong>${item.carretera}</strong><span>${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}</span>`;
-    // Select on pointerdown, before the input's focusout timeout can hide an
-    // overlay that is clipped or delayed by the sticky sidebar scroll area.
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      selectSegmentRoad(segment, item);
-    });
     button.addEventListener("click", () => selectSegmentRoad(segment, item));
     suggestions.appendChild(button);
+    choices.push({ item, button });
   }
   if (items.length > shown.length) {
     const more = document.createElement("div");
@@ -415,18 +439,23 @@ function renderSuggestions(segment, items, q) {
     suggestions.appendChild(more);
   }
   suggestions.hidden = false;
+  segmentSuggestionState.set(segment, { items: choices, highlighted: -1 });
+  segment.querySelector('[data-role="road"]').setAttribute("aria-expanded", "true");
 }
 
 async function refreshSegmentSuggestions(segment) {
   const roadInputLocal = segment.querySelector('[data-role="road"]');
   const message = segment.querySelector('[data-role="road-message"]');
   const q = roadInputLocal.value.trim();
+  const requestId = Number(segment.dataset.suggestionRequest || 0) + 1;
+  segment.dataset.suggestionRequest = String(requestId);
   segment.querySelector('[data-role="clear-road"]').classList.toggle("visible", q.length > 0);
   const selected = segmentRoad(segment);
   if (selected && normalizeRoad(selected.carretera) !== normalizeRoad(q)) segmentRoads.delete(segment.dataset.segmentId);
   message.className = "field-message";
   try {
     await loadRoads();
+    if (requestId !== Number(segment.dataset.suggestionRequest)) return;
     renderSuggestions(segment, filterRoads(q), q);
     const exact = roadExact(q);
     if (exact) {
@@ -442,6 +471,7 @@ async function refreshSegmentSuggestions(segment) {
       message.textContent = "";
     }
   } catch (error) {
+    if (requestId !== Number(segment.dataset.suggestionRequest)) return;
     message.textContent = String(error.message || error);
     message.className = "field-message error";
   }
@@ -452,7 +482,7 @@ function clearSegmentRoad(segment) {
   segmentRoads.delete(segment.dataset.segmentId);
   segment.querySelector('[data-role="road-message"]').textContent = "";
   segment.querySelector('[data-role="road-message"]').className = "field-message";
-  segment.querySelector('[data-role="suggestions"]').hidden = true;
+  closeSegmentSuggestions(segment);
   segment.querySelector('[data-role="clear-road"]').classList.remove("visible");
   showSegmentWarnings(segment, []);
   segment.querySelector('[data-role="road"]').focus();
@@ -516,7 +546,7 @@ function segmentMarkup(id) {
   return `
     <section class="segment-block" data-segment-id="${id}">
       <header class="segment-header"><strong>Tramo ${id}</strong><span class="segment-active-label">Activo</span><button class="ghost segment-remove" type="button" data-role="remove-segment">Eliminar</button></header>
-      <label class="road-field"><span>Carretera</span><div class="input-wrap"><input data-role="road" autocomplete="off" placeholder="Ma-2210" required><button data-role="clear-road" class="clear-input" type="button" aria-label="Limpiar carretera">×</button></div><div data-role="suggestions" class="suggestions" hidden></div><p data-role="road-message" class="field-message"></p></label>
+      <label class="road-field"><span>Carretera</span><div class="input-wrap"><input data-role="road" autocomplete="off" placeholder="Ma-2210" required role="combobox" aria-autocomplete="list" aria-expanded="false"><button data-role="clear-road" class="clear-input" type="button" aria-label="Limpiar carretera">×</button></div><div data-role="suggestions" class="suggestions" hidden></div><p data-role="road-message" class="field-message"></p></label>
       <label><span>Sentido</span><select data-role="direction"><option value="creciente">Creciente</option><option value="decreciente">Decreciente</option><option value="ambos">Ambos</option></select></label>
       <div class="grid two"><label><span>PK inicio</span><input data-role="pk-start" type="number" step="0.001" placeholder="1.000" required></label><label><span>PK fin</span><input data-role="pk-end" type="number" step="0.001" placeholder="6.000" required></label></div>
       <div data-role="pk-warnings" class="warnings" hidden></div>
@@ -549,6 +579,22 @@ segmentList.addEventListener("focusin", (event) => {
   const segment = event.target.closest(".segment-block");
   if (segment) setSegmentActive(segment);
 });
+segmentList.addEventListener("keydown", (event) => {
+  if (!event.target.matches('[data-role="road"]')) return;
+  const segment = event.target.closest(".segment-block");
+  const state = segmentSuggestionState.get(segment);
+  if (event.key === "Escape") { closeSegmentSuggestions(segment); return; }
+  if (!state?.items.length) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const initial = event.key === "ArrowDown" ? 0 : state.items.length - 1;
+    updateSuggestionHighlight(segment, state.highlighted < 0 ? initial : state.highlighted + (event.key === "ArrowDown" ? 1 : -1));
+  }
+  if (event.key === "Enter" && state.highlighted >= 0) {
+    event.preventDefault();
+    selectSegmentRoad(segment, state.items[state.highlighted].item);
+  }
+});
 segmentList.addEventListener("pointerdown", (event) => {
   const segment = event.target.closest(".segment-block");
   if (segment) setSegmentActive(segment);
@@ -572,7 +618,8 @@ segmentList.addEventListener("change", (event) => {
 segmentList.addEventListener("focusout", (event) => {
   const segment = event.target.closest(".segment-block");
   if (!segment) return;
-  if (event.target.matches('[data-role="road"]')) setTimeout(() => { segment.querySelector('[data-role="suggestions"]').hidden = true; }, 180);
+  const roadField = event.target.closest(".road-field");
+  if (roadField && !roadField.contains(event.relatedTarget)) closeSegmentSuggestions(segment);
   if (event.target.matches('[data-role="pk-start"], [data-role="pk-end"]')) validateSegmentPk(segment, false);
 });
 segmentList.addEventListener("click", (event) => {
@@ -584,6 +631,12 @@ segmentList.addEventListener("click", (event) => {
   if (event.target.closest('[data-role="remove-division"]')) { event.target.closest(".division-row")?.remove(); try { divisionValues(segment); } catch (_) { /* aviso ya renderizado */ } }
 });
 addSegmentButton.addEventListener("click", addSegment);
+document.addEventListener("pointerdown", (event) => {
+  const activeRoadField = event.target.closest(".road-field");
+  segments().forEach((segment) => {
+    if (!activeRoadField || !segment.contains(activeRoadField)) closeSegmentSuggestions(segment);
+  });
+});
 
 function updateSmoothHelp() {
   const q = Number(smooth.value);

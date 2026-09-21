@@ -36,14 +36,33 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("bottomGap", script)
         self.assertNotIn("Acércate para mostrar la red calibrada.", script)
 
-    def test_segment_autocomplete_selects_before_focusout_and_stays_role_based(self) -> None:
+    def test_segment_autocomplete_uses_one_selection_path_and_roles(self) -> None:
         script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
         dynamic_markup = script[script.index("function segmentMarkup"):script.index("function addSegment")]
-        self.assertIn('button.addEventListener("pointerdown"', script)
-        self.assertIn("event.preventDefault();", script)
-        self.assertIn("selectSegmentRoad(segment, item);", script)
+        self.assertEqual(script.count('button.addEventListener("click", () => selectSegmentRoad(segment, item))'), 1)
+        self.assertNotIn("setTimeout(() => { segment.querySelector('[data-role=\"suggestions\"]')", script)
+        self.assertIn("document.addEventListener(\"pointerdown\"", script)
+        self.assertIn("event.target.closest(\".road-field\")", script)
+        self.assertIn("!activeRoadField || !segment.contains(activeRoadField)", script)
+        self.assertIn("roadField && !roadField.contains(event.relatedTarget)", script)
+        self.assertIn("const roadField = event.target.closest(\".road-field\")", script)
+        self.assertIn("segment.dataset.suggestionRequest", script)
+        self.assertIn("ArrowDown", script)
+        self.assertIn("ArrowUp", script)
+        self.assertIn("event.key === \"Enter\"", script)
+        self.assertIn("event.key === \"Escape\"", script)
+        self.assertIn('suggestions.setAttribute("role", "listbox")', script)
+        self.assertIn('button.setAttribute("role", "option")', script)
         self.assertIn('data-role="road"', dynamic_markup)
+        self.assertIn('aria-expanded="false"', dynamic_markup)
         self.assertNotIn('id="carretera"', dynamic_markup)
+
+    def test_segment_autocomplete_stays_inside_the_scrollable_sidebar(self) -> None:
+        styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+        start = styles.index(".suggestions {")
+        block = styles[start:styles.index("}\n", start) + 2]
+        self.assertIn("position: relative", block)
+        self.assertIn("overflow-y: auto", block)
 
     def test_viewer_results_navigation_reuses_the_existing_viewer(self) -> None:
         app_script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
