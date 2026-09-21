@@ -190,6 +190,47 @@ def _orient_to_pk_start(
     return geometry
 
 
+def _continuous_route_pieces(
+    pieces: list[tuple[float, float, tuple[int, str], LineString, list[tuple[float, float]]]],
+    start_m: float,
+    end_m: float,
+    sentido: str,
+    tolerance_m: float = 0.01,
+) -> list[tuple[float, LineString, list[tuple[float, float]]]]:
+    """Select one geometrically continuous calibrated chain for a PK interval.
+
+    Multiple carriageways can expose the same M range.  M overlap alone is
+    insufficient to concatenate them: select one deterministic chain and fail
+    when the next calibrated part is physically disconnected.
+    """
+    route: list[tuple[float, LineString, list[tuple[float, float]]]] = []
+    remaining = list(pieces)
+    increasing = sentido != "decreciente"
+    cursor = start_m if increasing else end_m
+    target = end_m if increasing else start_m
+    while (cursor < target - tolerance_m) if increasing else (cursor > target + tolerance_m):
+        candidates = [
+            item for item in remaining
+            if (
+                (increasing and item[0] <= cursor + tolerance_m and item[1] > cursor + tolerance_m)
+                or (not increasing and item[0] < cursor - tolerance_m and item[1] >= cursor - tolerance_m)
+            )
+        ]
+        if not candidates:
+            raise TramoError("La calibración del tramo no cubre un recorrido continuo.")
+        if route:
+            previous_end = Point(route[-1][1].coords[-1])
+            connected = [item for item in candidates if previous_end.distance(Point(item[3].coords[0])) <= tolerance_m]
+            if not connected:
+                raise TramoError("Las geometrías calibradas del tramo son físicamente discontinuas.")
+            candidates = connected
+        low, high, _priority, part, calibration = min(candidates, key=lambda item: item[2])
+        route.append((low, part, calibration))
+        remaining.remove((low, high, _priority, part, calibration))
+        cursor = high if increasing else low
+    return route
+
+
 def extraer_tramo(
     lineas: gpd.GeoDataFrame,
     cols: dict[str, str | None],
@@ -229,10 +270,10 @@ def extraer_tramo(
     start_m = pk_low * 1000.0
     end_m = pk_high * 1000.0
     m0, m1, scale = _m_values(source, cols)
-    pieces: list[tuple[float, LineString, list[tuple[float, float]]]] = []
+    pieces: list[tuple[float, float, tuple[int, str], LineString, list[tuple[float, float]]]] = []
     methods: list[str] = []
     discontinuities = 0
-    for _, row in source.iterrows():
+    for row_index, row in source.iterrows():
         geom = row.geometry
         if geom is None or geom.is_empty:
             continue
@@ -259,11 +300,13 @@ def extraer_tramo(
             piece_start, piece_end = (overlap_end, overlap_start) if sentido_norm == "decreciente" else (overlap_start, overlap_end)
             part, calibration = extract_between_m_with_calibration(coords, piece_start, piece_end)
             if part is not None:
-                pieces.append((overlap_start, part, calibration))
+                original = str(row.get("ORIGINAL", "")).upper()
+                priority = (0 if original in {"SI", "1", "TRUE"} else 1, str(row_index))
+                pieces.append((overlap_start, overlap_end, priority, part, calibration))
                 methods.append(component_method)
     if not pieces:
         raise TramoError("No se pudo extraer geometria para el rango PK solicitado.")
-    pieces.sort(key=lambda item: item[0], reverse=sentido_norm == "decreciente")
+    pieces = _continuous_route_pieces(pieces, start_m, end_m, sentido_norm)
     # Keep the geometry in the same, explicit sequence as the calibration.
     # Union/linemerge can reorder or invert components and would desynchronise M.
     geometry = pieces[0][1] if len(pieces) == 1 else MultiLineString([piece for _, piece, _ in pieces])

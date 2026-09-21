@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from datetime import timedelta
+import ipaddress
 import os
 from pathlib import Path
 import tempfile
@@ -42,6 +44,8 @@ templates = Jinja2Templates(directory=ROOT / "templates")
 EXECUTOR = ThreadPoolExecutor(max_workers=1)
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = Lock()
+MAX_COMPLETED_JOBS = 100
+JOB_RETENTION_HOURS = 24
 _VISOR_BOUNDS_CACHE: dict[tuple[str, str, int], tuple[float, float, float, float]] = {}
 
 PROGRESS_PHASES = [
@@ -503,6 +507,7 @@ def generar(payload: GenerarRequest) -> JSONResponse:
     if payload.mapa_base not in {"ign_gris", "carto_positron"}:
         raise HTTPException(status_code=422, detail="Mapa base no valido.")
     tramos = payload.tramos or []
+    # Deprecated compatibility input: reject legacy clients explicitly.
     if payload.agrupar_como_subtramos:
         raise HTTPException(status_code=422, detail="El modo agrupado se retiró; añada las divisiones PK dentro de cada tramo.")
     try:
@@ -532,6 +537,7 @@ def generar(payload: GenerarRequest) -> JSONResponse:
     job_id = uuid4().hex
     now = datetime.now().isoformat(timespec="seconds")
     with JOBS_LOCK:
+        _prune_jobs_locked(datetime.now())
         JOBS[job_id] = {
             "job_id": job_id,
             "estado": "pendiente",
@@ -573,6 +579,25 @@ def _update_job(job_id: str, **updates: Any) -> None:
     with JOBS_LOCK:
         if job_id in JOBS:
             JOBS[job_id].update(updates)
+
+
+def _prune_jobs_locked(now: datetime) -> None:
+    """Bound completed in-memory jobs without disturbing active requests."""
+    terminal: list[tuple[datetime, str]] = []
+    for job_id, job in JOBS.items():
+        if job.get("estado") not in {"completado", "error"}:
+            continue
+        try:
+            finished = datetime.fromisoformat(str(job.get("finalizado") or job.get("creado")))
+        except ValueError:
+            finished = now - timedelta(hours=JOB_RETENTION_HOURS + 1)
+        terminal.append((finished, job_id))
+    cutoff = now - timedelta(hours=JOB_RETENTION_HOURS)
+    stale = {job_id for finished, job_id in terminal if finished < cutoff}
+    recent = sorted((item for item in terminal if item[1] not in stale), reverse=True)
+    stale.update(job_id for _finished, job_id in recent[MAX_COMPLETED_JOBS:])
+    for job_id in stale:
+        JOBS.pop(job_id, None)
 
 
 def _run_generation_job(job_id: str, params: dict[str, Any]) -> None:
@@ -621,8 +646,11 @@ def progreso(job_id: str) -> dict[str, Any]:
 @app.get("/outputs/{job_id}/{filename:path}")
 def download(job_id: str, filename: str) -> FileResponse:
     outputs_root = resolve_tool_path(load_config().get("paths", {}).get("outputs", "outputs")).resolve()
-    target = (outputs_root / job_id / filename).resolve()
-    if not _is_within_outputs_root(target, outputs_root):
+    job_dir = (outputs_root / job_id).resolve()
+    if job_dir.parent != outputs_root or not _is_within_outputs_root(job_dir, outputs_root):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado") from None
+    target = (job_dir / filename).resolve()
+    if not _is_within_outputs_root(target, job_dir):
         raise HTTPException(status_code=404, detail="Archivo no encontrado") from None
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
@@ -637,6 +665,18 @@ def _is_within_outputs_root(target: Path, outputs_root: Path) -> bool:
     return True
 
 
+def _validated_host(config: dict[str, Any]) -> str:
+    host = str(config.get("host", "127.0.0.1")).strip()
+    allow_remote = bool(config.get("allow_remote", False))
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host.lower() == "localhost"
+    if not is_loopback and not allow_remote:
+        raise RuntimeError("El servidor local solo permite hosts loopback; establezca app.allow_remote: true para exponerlo explícitamente.")
+    return host
+
+
 if __name__ == "__main__":
     cfg = load_config().get("app", {})
-    uvicorn.run("app:app", host=str(cfg.get("host", "127.0.0.1")), port=int(cfg.get("port", 8025)), reload=False)
+    uvicorn.run("app:app", host=_validated_host(cfg), port=int(cfg.get("port", 8025)), reload=False)

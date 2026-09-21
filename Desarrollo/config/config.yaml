@@ -1,5 +1,6 @@
 app:
   host: "127.0.0.1"
+  allow_remote: false
   port: 8025
   debug: false
 

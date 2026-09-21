@@ -160,7 +160,7 @@ def load_lineas(config: dict[str, Any], carretera: str | None = None) -> tuple[g
         cols = detect_columns(probe, config, pk=False)
         road_col = cols.get("carretera")
         if road_col:
-            where = f"{road_col} = {sql_quote(carretera)}"
+            where = f"{_quote_identifier(road_col)} = {sql_quote(carretera)}"
     gdf, layer_notes = read_layer(path, layer, where=where)
     notes.extend(layer_notes)
     return gdf, detect_columns(gdf, config, pk=False), notes
@@ -177,7 +177,7 @@ def load_pks(config: dict[str, Any], carretera: str | None = None) -> tuple[gpd.
         cols = detect_columns(probe, config, pk=True)
         road_col = cols.get("carretera")
         if road_col:
-            where = f"{road_col} = {sql_quote(carretera)}"
+            where = f"{_quote_identifier(road_col)} = {sql_quote(carretera)}"
     gdf, layer_notes = read_layer(path, layer, where=where)
     notes.extend(layer_notes)
     return gdf, detect_columns(gdf, config, pk=True), notes

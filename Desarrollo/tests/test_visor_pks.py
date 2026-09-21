@@ -80,6 +80,15 @@ class ViewerPkTests(unittest.TestCase):
         self.assertIn("setGenerationError(String(error.message || error))", script)
         self.assertNotIn("form.reset()", script)
 
+    def test_frontend_escapes_dynamic_status_and_autocomplete_content(self) -> None:
+        script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function escapeHtml(value)", script)
+        self.assertIn("heading.textContent = title", script)
+        self.assertIn("paragraph.textContent = text", script)
+        self.assertIn("road.textContent = item.carretera", script)
+        self.assertIn("if (roadLoading === loading) roadLoading = null", script)
+        self.assertIn("safeOutputUrl", script)
+
     def test_export_popover_only_closes_outside_its_wrapper(self) -> None:
         script = (ROOT / "static" / "js" / "road_pk_tools.js").read_text(encoding="utf-8")
         self.assertIn("isOutsideExportClick(wrap, event.target)", script)

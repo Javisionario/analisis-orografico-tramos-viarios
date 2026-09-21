@@ -1,10 +1,5 @@
 const form = document.querySelector("#generationForm");
 const statusBox = document.querySelector("#status");
-const roadInput = document.querySelector("#carretera");
-const clearRoad = document.querySelector("#clearRoad");
-const suggestionsBox = document.querySelector("#roadSuggestions");
-const roadMessage = document.querySelector("#roadMessage");
-const pkWarnings = document.querySelector("#pkWarnings");
 const resultsBox = document.querySelector("#results");
 const zipDownloads = document.querySelector("#zipDownloads");
 const rightPanel = document.querySelector("#rightPanel");
@@ -59,7 +54,6 @@ const helpOverlay = document.querySelector("#helpOverlay");
 const helpPanel = document.querySelector("#helpPanel");
 const helpBackground = document.querySelectorAll("body > .topbar, body > .app-layout");
 
-let selectedRoad = null;
 let roadCache = null;
 let roadLoading = null;
 let loadingTimer = null;
@@ -98,7 +92,29 @@ let cartoStoredKeyAvailable = false;
 let cartoShowPressed = false;
 
 function setStatus(title, text) {
-  statusBox.innerHTML = `<h2>${title}</h2><p>${text}</p>`;
+  statusBox.replaceChildren();
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  const paragraph = document.createElement("p");
+  paragraph.textContent = text;
+  statusBox.append(heading, paragraph);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
+function safeOutputUrl(value) {
+  const url = String(value || "");
+  return /^\/outputs\/[A-Za-z0-9_.-]+\/[^?#]+$/.test(url) ? url : "#";
+}
+
+function setParagraphs(box, items) {
+  box.replaceChildren(...items.filter(Boolean).map((item) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = item;
+    return paragraph;
+  }));
 }
 
 function addBackToViewerAction() {
@@ -220,13 +236,13 @@ function renderLoading(job = {}) {
         <div class="spinner" aria-hidden="true"></div>
         <div>
           <h2>Generando resultados</h2>
-          <p>${phase}</p>
+          <p>${escapeHtml(phase)}</p>
         </div>
         <strong>${formatElapsed(elapsed)}</strong>
       </div>
       <div class="progress-track"><div style="width:${percent}%"></div></div>
       <ol class="progress-steps">${details}</ol>
-      <p class="loading-note">${job.detalle || "La herramienta está componiendo mapas, perfil y archivos de descarga."}</p>
+      <p class="loading-note">${escapeHtml(job.detalle || "La herramienta está componiendo mapas, perfil y archivos de descarga.")}</p>
     </div>
   `;
 }
@@ -291,7 +307,7 @@ function showSegmentWarnings(segment, items) {
   const box = segment.querySelector('[data-role="pk-warnings"]');
   const clean = items.filter(Boolean);
   box.hidden = clean.length === 0;
-  box.innerHTML = clean.map((item) => `<p>${item}</p>`).join("");
+  setParagraphs(box, clean);
 }
 
 function updateMultiSegmentMode() {
@@ -334,7 +350,7 @@ function divisionValues(segment, report = true) {
     if (ordered.some((value, index) => index && value - ordered[index - 1] <= 0.002)) problems.push("No puede haber divisiones duplicadas o separadas menos de 2 m.");
   }
   const box = segment.querySelector('[data-role="division-warnings"]');
-  if (report && box) { box.hidden = !problems.length; box.innerHTML = problems.map((item) => `<p>${item}</p>`).join(""); }
+  if (report && box) { box.hidden = !problems.length; setParagraphs(box, problems); }
   if (problems.length) throw new Error(problems[0]);
   return values.filter((value) => value !== null);
 }
@@ -361,8 +377,16 @@ async function loadRoads() {
         return items;
       });
   }
-  roadCache = await roadLoading;
-  return roadCache;
+  const loading = roadLoading;
+  try {
+    roadCache = await loading;
+    return roadCache;
+  } catch (error) {
+    roadCache = null;
+    throw error;
+  } finally {
+    if (roadLoading === loading) roadLoading = null;
+  }
 }
 
 function filterRoads(q) {
@@ -430,7 +454,10 @@ function renderSuggestions(segment, items, q) {
   suggestions.setAttribute("role", "listbox");
   const shown = items.slice(0, SUGGESTION_LIMIT);
   if (!shown.length) {
-    suggestions.innerHTML = `<div class="suggestion-empty">${q ? "No hay coincidencias" : "No hay carreteras disponibles"}</div>`;
+    const empty = document.createElement("div");
+    empty.className = "suggestion-empty";
+    empty.textContent = q ? "No hay coincidencias" : "No hay carreteras disponibles";
+    suggestions.appendChild(empty);
     suggestions.hidden = false;
     segmentSuggestionState.set(segment, { items: [], highlighted: -1 });
     segment.querySelector('[data-role="road"]').setAttribute("aria-expanded", "true");
@@ -443,7 +470,11 @@ function renderSuggestions(segment, items, q) {
     button.className = "suggestion";
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", "false");
-    button.innerHTML = `<strong>${item.carretera}</strong><span>${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}</span>`;
+    const road = document.createElement("strong");
+    road.textContent = item.carretera;
+    const range = document.createElement("span");
+    range.textContent = `${formatPk(item.pk_min)} - ${formatPk(item.pk_max)}`;
+    button.append(road, range);
     button.addEventListener("click", () => selectSegmentRoad(segment, item));
     suggestions.appendChild(button);
     choices.push({ item, button });
@@ -1036,15 +1067,15 @@ function previewImages(items) {
   if (!items.length) return "<p class='empty'>Sin previsualizaciones PNG.</p>";
   return items.map((item) => `
     <figure class="preview">
-      <img src="${item.url}" loading="lazy" alt="${item.name}">
-      <figcaption><a href="${item.url}" target="_blank">${item.name}</a></figcaption>
+      <img src="${escapeHtml(safeOutputUrl(item.url))}" loading="lazy" alt="${escapeHtml(item.name)}">
+      <figcaption><a href="${escapeHtml(safeOutputUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name)}</a></figcaption>
     </figure>
   `).join("");
 }
 
 function dataLinks(items) {
   if (!items.length) return "<p class='empty'>Sin datos auxiliares.</p>";
-  return items.map((item) => `<a href="${item.url}" target="_blank">${item.name}</a>`).join("");
+  return items.map((item) => `<a href="${escapeHtml(safeOutputUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name)}</a>`).join("");
 }
 
 function numberText(value, suffix = "", digits = 1) {
@@ -1059,7 +1090,7 @@ function pkText(value) {
 }
 
 function metric(label, value) {
-  return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
+  return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 function renderAnomalyRanges(anomalias) {
@@ -1122,7 +1153,7 @@ function renderSummaryCard(data) {
       <section class="summary-card">
         <div>
           <h3>Resumen del tramo</h3>
-          <p>${tramo.carretera || params.carretera || ""} · ${tramo.sentido || params.sentido || ""}</p>
+          <p>${escapeHtml(tramo.carretera || params.carretera || "")} · ${escapeHtml(tramo.sentido || params.sentido || "")}</p>
         </div>
         <div class="metrics-grid">
           ${metric("Vía", tramo.carretera || params.carretera || "Sin dato")}
@@ -1156,7 +1187,7 @@ function renderZipButtons(zipDownloadsData) {
     const item = zipDownloadsData?.[key];
     if (!item) continue;
     const link = document.createElement("a");
-    link.href = item.url;
+    link.href = safeOutputUrl(item.url);
     link.textContent = label;
     link.className = "zip-button";
     zipDownloads.appendChild(link);
@@ -1174,7 +1205,7 @@ function renderResults(data) {
   const info = `
     <div class="run-info">
       <strong>Proceso completado</strong>
-      <span>Salida: ${data.job_id}</span>
+      <span>Salida: ${escapeHtml(data.job_id)}</span>
     </div>
   `;
   resultsBox.innerHTML = info
