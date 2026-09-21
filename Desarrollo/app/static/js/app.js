@@ -54,13 +54,10 @@ const helpOverlay = document.querySelector("#helpOverlay");
 const helpPanel = document.querySelector("#helpPanel");
 const helpBackground = document.querySelectorAll("body > .topbar, body > .app-layout");
 
-let roadCache = null;
-let roadLoading = null;
 let loadingTimer = null;
 let loadingStartedAt = null;
 let lastProgress = null;
 let helpTrigger = null;
-const SUGGESTION_LIMIT = 90;
 const PK_INTERVALS = [1, 5, 10, 25, 50, 100, 250];
 const PROGRESS_PHASES = [
   "Preparando el tramo de estudio.",
