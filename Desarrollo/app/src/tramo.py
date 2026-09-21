@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import geopandas as gpd
 from shapely.geometry import LineString, MultiLineString, Point
-from shapely.ops import linemerge, substring, unary_union
 
 from .utils import as_float, format_pk
+from .referenciacion_lineal import (
+    METHOD_GEOMETRY_M,
+    component_coordinates,
+    extract_between_m_with_calibration,
+    m_range,
+)
 
 
 class TramoError(ValueError):
@@ -29,6 +34,9 @@ class TramoExtraido:
     crs: Any
     advertencias: list[str]
     metadatos: dict[str, Any]
+    # Deliberately internal: it can contain a vertex per source coordinate and
+    # must not be copied to JSON metadata or generated output manifests.
+    calibracion_distancia_m: list[tuple[float, float]] = field(default_factory=list)
 
 
 def _field(cols: dict[str, str | None], name: str) -> str:
@@ -182,28 +190,6 @@ def _orient_to_pk_start(
     return geometry
 
 
-def _extract_piece(geom: LineString, row_start_m: float, row_end_m: float, start_m: float, end_m: float) -> LineString | None:
-    span = row_end_m - row_start_m
-    if abs(span) < 1e-9 or geom.length <= 0:
-        return None
-    d0 = (start_m - row_start_m) / span * geom.length
-    d1 = (end_m - row_start_m) / span * geom.length
-    d0 = max(0.0, min(float(geom.length), d0))
-    d1 = max(0.0, min(float(geom.length), d1))
-    if abs(d1 - d0) < 1e-6:
-        return None
-    try:
-        part = substring(geom, d0, d1)
-    except Exception:
-        return None
-    if part.is_empty or part.length <= 0:
-        return None
-    if isinstance(part, LineString):
-        return part
-    merged = linemerge(part)
-    return merged if isinstance(merged, LineString) else None
-
-
 def extraer_tramo(
     lineas: gpd.GeoDataFrame,
     cols: dict[str, str | None],
@@ -243,7 +229,8 @@ def extraer_tramo(
     start_m = pk_low * 1000.0
     end_m = pk_high * 1000.0
     m0, m1, scale = _m_values(source, cols)
-    pieces: list[tuple[float, LineString]] = []
+    pieces: list[tuple[float, LineString, list[tuple[float, float]]]] = []
+    methods: list[str] = []
     discontinuities = 0
     for _, row in source.iterrows():
         geom = row.geometry
@@ -260,29 +247,39 @@ def extraer_tramo(
         overlap_end = min(end_m, row_high)
         if overlap_end <= overlap_start:
             continue
-        geoms = list(geom.geoms) if isinstance(geom, MultiLineString) else [geom]
-        for item in geoms:
-            part = _extract_piece(item, row_start_m, row_end_m, overlap_start, overlap_end)
+        for _item, coords, component_method in component_coordinates(row, geom, row_start_m, row_end_m):
+            component_range = m_range(coords)
+            if component_range is None:
+                continue
+            component_low, component_high = component_range
+            overlap_start = max(start_m, component_low)
+            overlap_end = min(end_m, component_high)
+            if overlap_end <= overlap_start:
+                continue
+            piece_start, piece_end = (overlap_end, overlap_start) if sentido_norm == "decreciente" else (overlap_start, overlap_end)
+            part, calibration = extract_between_m_with_calibration(coords, piece_start, piece_end)
             if part is not None:
-                pieces.append((overlap_start, part))
+                pieces.append((overlap_start, part, calibration))
+                methods.append(component_method)
     if not pieces:
         raise TramoError("No se pudo extraer geometria para el rango PK solicitado.")
-    pieces.sort(key=lambda item: item[0])
-    geometry = MultiLineString([piece for _, piece in pieces])
-    try:
-        merged = linemerge(unary_union(geometry))
-        if isinstance(merged, (LineString, MultiLineString)) and not merged.is_empty:
-            geometry = merged
-    except Exception:
-        pass
+    pieces.sort(key=lambda item: item[0], reverse=sentido_norm == "decreciente")
+    # Keep the geometry in the same, explicit sequence as the calibration.
+    # Union/linemerge can reorder or invert components and would desynchronise M.
+    geometry = pieces[0][1] if len(pieces) == 1 else MultiLineString([piece for _, piece, _ in pieces])
     if isinstance(geometry, MultiLineString) and len(geometry.geoms) > 1:
         discontinuities = len(geometry.geoms) - 1
         warnings.append(f"El tramo tiene {len(geometry.geoms)} partes; posible discontinuidad geometrica.")
-    geometry = _orient_to_pk_start(geometry, pks, pk_cols, route_start, sentido_norm)
     if geometry.length <= 0:
         raise TramoError("La geometria extraida tiene longitud cero.")
 
-    warnings.append("La coordenada M no se conserva al leer con GeoPandas/pyogrio; se usa m_from/m_to o PK como fallback.")
+    if any(method != METHOD_GEOMETRY_M for method in methods):
+        warnings.append("Alguna geometría no expone M real; se usa el fallback explícito por límites de fila.")
+    calibration: list[tuple[float, float]] = []
+    distance = 0.0
+    for _part_start, part, part_calibration in pieces:
+        calibration.extend((distance + local_distance, measured) for local_distance, measured in part_calibration)
+        distance += float(part.length)
     return TramoExtraido(
         carretera=carretera,
         sentido=sentido_norm,
@@ -301,5 +298,7 @@ def extraer_tramo(
             "pk_disponible_max": available_max,
             "partes": len(geometry.geoms) if isinstance(geometry, MultiLineString) else 1,
             "discontinuidades": discontinuities,
+            "referenciacion_lineal": {"metodo": METHOD_GEOMETRY_M if methods and all(item == METHOD_GEOMETRY_M for item in methods) else "row_bounds_xy_fallback"},
         },
+        calibracion_distancia_m=calibration,
     )

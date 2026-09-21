@@ -12,6 +12,7 @@ from rasterio.warp import transform as transform_coords
 from scipy.signal import savgol_filter
 
 from .tramo import TramoExtraido
+from .referenciacion_lineal import m_at_distance
 from .utils import as_float
 
 
@@ -315,18 +316,18 @@ def _calculation_mesh(
     distances: np.ndarray,
     intervalo_m: float,
     halo_puntos: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, np.ndarray]:
     """Añade contexto sin modificar ningún punto de la malla visible."""
     visible_points = [tramo.geometry.interpolate(float(distance)) for distance in distances]
     if tramo_calculo is None or halo_puntos <= 0:
         xs = np.array([point.x for point in visible_points], dtype=float)
         ys = np.array([point.y for point in visible_points], dtype=float)
-        return distances, xs, ys, 0, 0
+        return distances, xs, ys, 0, 0, distances.copy()
 
     start_offset = float(tramo_calculo.geometry.project(tramo.geometry.interpolate(0.0)))
     end_offset = float(tramo_calculo.geometry.project(tramo.geometry.interpolate(float(tramo.longitud_m))))
     if end_offset < start_offset:
-        return distances, np.array([p.x for p in visible_points]), np.array([p.y for p in visible_points]), 0, 0
+        return distances, np.array([p.x for p in visible_points]), np.array([p.y for p in visible_points]), 0, 0, distances.copy()
 
     eps = 1e-7
     pre_count = min(int(halo_puntos), max(0, int(np.floor((start_offset + eps) / intervalo_m))))
@@ -352,6 +353,7 @@ def _calculation_mesh(
         np.array([point.y for point in all_points], dtype=float),
         pre_count,
         post_count,
+        start_offset + np.concatenate((pre_distances, distances, post_distances)),
     )
 
 
@@ -529,7 +531,7 @@ def generar_perfil(
     # Recalculamos el punto fijo con las muestras realmente disponibles antes de
     # obtener cotas, de modo que la fórmula use las ventanas que se aplicarán.
     for _ in range(8):
-        probe_distances, _probe_xs, _probe_ys, _pre, _post = _calculation_mesh(
+        probe_distances, _probe_xs, _probe_ys, _pre, _post, _probe_reference_distances = _calculation_mesh(
             tramo, tramo_calculo, visible_distances, intervalo_m, requested_halo
         )
         probe = np.zeros(len(probe_distances), dtype=float)
@@ -561,15 +563,21 @@ def generar_perfil(
         if effective_halo == requested_halo:
             break
         requested_halo = effective_halo
-    calculation_distances, xs, ys, pre_count, post_count = _calculation_mesh(
+    calculation_distances, xs, ys, pre_count, post_count, calculation_reference_distances = _calculation_mesh(
         tramo,
         tramo_calculo,
         visible_distances,
         intervalo_m,
         requested_halo,
     )
-    fraction = np.divide(calculation_distances, max(tramo.longitud_m, 1e-9))
-    pk_calculation = tramo.pk_inicio_recorrido + (tramo.pk_fin_recorrido - tramo.pk_inicio_recorrido) * fraction
+    calibration_source = tramo_calculo or tramo
+    calibration = list(calibration_source.calibracion_distancia_m)
+    if calibration:
+        pk_calculation = np.array([m_at_distance(calibration, float(distance)) / 1000.0 for distance in calculation_reference_distances])
+    else:
+        fraction = np.divide(calculation_distances, max(tramo.longitud_m, 1e-9))
+        pk_calculation = tramo.pk_inicio_recorrido + (tramo.pk_fin_recorrido - tramo.pk_inicio_recorrido) * fraction
+        warnings.append("Perfil sin calibración M real; se usa fallback XY explícito.")
 
     source = "mdt"
     raster_sampling_meta: dict[str, Any] = {

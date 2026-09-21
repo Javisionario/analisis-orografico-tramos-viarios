@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 import re
@@ -9,6 +10,8 @@ import unicodedata
 
 import geopandas as gpd
 import pyogrio
+
+from .referenciacion_lineal import measured_parts_from_gpkg
 
 from .utils import choose_column, resolve_data_path
 
@@ -53,21 +56,61 @@ def list_layers(path: Path) -> tuple[list[dict[str, str | None]], list[str]]:
     return [{"name": str(row[0]), "geometry_type": row[1]} for row in rows], notes
 
 
+def _attach_measured_parts(path: Path, layer: str, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Attach raw M coordinates keyed by GeoPackage fid when available."""
+    if gdf.empty or not path.suffix.lower() == ".gpkg":
+        return gdf
+    try:
+        fids = [int(index) for index in gdf.index]
+        by_fid: dict[int, list[list[tuple[float, float, float]]]] = {}
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+            # SQLite commonly limits bound variables to 999. BBOX responses can
+            # legitimately exceed that, so retain the FID association in chunks.
+            for start in range(0, len(fids), 900):
+                chunk = fids[start : start + 900]
+                marks = ",".join("?" for _ in chunk)
+                query = f'SELECT fid, geom FROM {_quote_identifier(layer)} WHERE fid IN ({marks})'
+                for fid, blob in conn.execute(query, tuple(chunk)):
+                    by_fid[int(fid)] = measured_parts_from_gpkg(blob)
+        result = gdf.copy(); result["__m_parts"] = [by_fid.get(int(index), []) for index in result.index]
+        return result
+    except Exception as exc:
+        gdf.attrs["m_parts_error"] = str(exc)
+        return gdf
+
+
+def _reconcile_m_notes(gdf: gpd.GeoDataFrame, notes: list[str]) -> list[str]:
+    """Do not report pyogrio's M-loss warning after successful raw recovery."""
+    measured_warning = any("Measured" in note or "(M)" in note for note in notes)
+    if not measured_warning:
+        # Points and polygons have no M by design. Their empty raw-coordinate
+        # column must never become a road-calibration fallback warning.
+        return notes
+    if "__m_parts" not in gdf.columns:
+        return notes
+    result = [note for note in notes if "Measured" not in note and "(M)" not in note]
+    missing = int(sum(not bool(parts) for parts in gdf["__m_parts"]))
+    if missing:
+        result.append(f"No se pudo recuperar M real en {missing} geometrías; se aplicará fallback explícito por fila.")
+    return result
+
+
 def read_layer(path: Path, layer: str, where: str | None = None, rows: int | None = None) -> tuple[gpd.GeoDataFrame, list[str]]:
     notes: list[str] = []
     kwargs: dict[str, Any] = {"layer": layer}
     if where:
         kwargs["where"] = where
     if rows:
-        kwargs["rows"] = rows
+        kwargs["max_features"] = rows
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        gdf = gpd.read_file(path, **kwargs)
+        gdf = pyogrio.read_dataframe(path, fid_as_index=True, **kwargs)
     for item in caught:
         msg = str(item.message)
         if "Measured" in msg or "(M)" in msg:
             notes.append(msg)
-    return gdf, notes
+    result = _attach_measured_parts(path, layer, gdf)
+    return result, _reconcile_m_notes(result, notes)
 
 
 def sql_quote(value: str) -> str:
@@ -230,12 +273,13 @@ def read_layer_bbox(path: Path, layer: str, bbox: tuple[float, float, float, flo
     notes: list[str] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        gdf = gpd.read_file(path, layer=layer, bbox=bbox)
+        gdf = pyogrio.read_dataframe(path, layer=layer, bbox=bbox, fid_as_index=True)
     for item in caught:
         msg = str(item.message)
         if "Measured" in msg or "(M)" in msg:
             notes.append(msg)
-    return gdf, notes
+    result = _attach_measured_parts(path, layer, gdf)
+    return result, _reconcile_m_notes(result, notes)
 
 
 def load_lineas_bbox(config: dict[str, Any], bbox: tuple[float, float, float, float]) -> tuple[gpd.GeoDataFrame, dict[str, str | None], list[str]]:
@@ -261,9 +305,10 @@ def _read_layer_bbox_roads(path: Path, layer: str, bbox: tuple[float, float, flo
     notes: list[str] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        gdf = gpd.read_file(path, layer=layer, bbox=bbox, where=where)
+        gdf = pyogrio.read_dataframe(path, layer=layer, bbox=bbox, where=where, fid_as_index=True)
     notes.extend(str(item.message) for item in caught if "Measured" in str(item.message) or "(M)" in str(item.message))
-    return gdf, notes
+    result = _attach_measured_parts(path, layer, gdf)
+    return result, _reconcile_m_notes(result, notes)
 
 
 def load_lineas_bbox_roads(config: dict[str, Any], bbox: tuple[float, float, float, float], roads: list[str]) -> tuple[gpd.GeoDataFrame, dict[str, str | None], list[str]]:
@@ -331,7 +376,10 @@ def diagnostico_capas(config: dict[str, Any]) -> dict[str, Any]:
             try:
                 layers, notes = list_layers(path)
                 item["layers"] = layers
-                result["advertencias"].extend(notes)
+                # Layer discovery can only report GDAL's generic conversion
+                # warning. The authoritative recovery check happens below when
+                # the configured road layer is read by FID.
+                result["advertencias"].extend(note for note in notes if "Measured" not in note and "(M)" not in note)
             except Exception as exc:
                 item["error"] = str(exc)
         result[key] = item
@@ -345,7 +393,7 @@ def diagnostico_capas(config: dict[str, Any]) -> dict[str, Any]:
             "campos_detectados": cols,
             "geom_types": sorted({str(v) for v in lineas.geometry.geom_type.dropna().unique()}),
             "has_z_sample": bool(lineas.geometry.dropna().iloc[0].has_z) if len(lineas.geometry.dropna()) else False,
-            "has_m_sample": bool(getattr(lineas.geometry.dropna().iloc[0], "has_m", False)) if len(lineas.geometry.dropna()) else False,
+            "has_m_sample": bool("__m_parts" in lineas.columns and any(bool(parts) for parts in lineas["__m_parts"])),
         }
         result["advertencias"].extend(notes)
     except Exception as exc:
@@ -364,5 +412,5 @@ def diagnostico_capas(config: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         result["pks_error"] = str(exc)
     if result.get("lineas", {}).get("has_m_sample") is False:
-        result["advertencias"].append("La lectura con GeoPandas/pyogrio no conserva M; se usara m_from/m_to y/o PKs como fallback.")
+        result["advertencias"].append("No se pudo recuperar M real de la capa viaria; se aplicará el fallback explícito por límites de fila.")
     return result

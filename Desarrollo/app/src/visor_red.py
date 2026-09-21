@@ -11,10 +11,10 @@ from typing import Any
 
 import geopandas as gpd
 from shapely.geometry import LineString, MultiLineString, Point, box
-from shapely.ops import linemerge, substring, unary_union
 
 from .tramo import m_values
 from .utils import as_float
+from .referenciacion_lineal import component_coordinates, extract_between_m, m_at_point, m_range, point_at_m
 
 
 class VisorRedError(ValueError):
@@ -57,16 +57,6 @@ def _metric_source(lineas: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return lineas.to_crs(metric_crs)
 
 
-def _valid_line(geometry: Any) -> LineString | None:
-    if isinstance(geometry, LineString) and not geometry.is_empty and geometry.length > 0:
-        return geometry
-    if isinstance(geometry, MultiLineString) and not geometry.is_empty:
-        merged = linemerge(geometry)
-        if isinstance(merged, LineString) and merged.length > 0:
-            return merged
-    return None
-
-
 def _row_pk_bounds(row: Any, m0: str, m1: str, scale: float) -> tuple[float, float] | None:
     start, end = as_float(row.get(m0)), as_float(row.get(m1))
     if start is None or end is None:
@@ -78,6 +68,9 @@ def _branch_value(row: Any, cols: dict[str, str | None], index: Any) -> str:
     direction = cols.get("sentido")
     if direction and direction in row.index and row.get(direction) is not None:
         return str(row.get(direction))
+    for field in ("IDVIA", "IDVIA_B"):
+        if field in row.index and row.get(field) is not None:
+            return str(row.get(field))
     return f"row:{index}"
 
 
@@ -97,20 +90,19 @@ def punto_a_pk(
     m0, m1, scale = m_values(source, cols)
     candidates: list[PuntoCalibrado] = []
     for index, row in source.iterrows():
-        geometry = _valid_line(row.geometry)
         bounds = _row_pk_bounds(row, m0, m1, scale)
-        if geometry is None or bounds is None or not row.get(road_col):
+        if bounds is None or not row.get(road_col):
             continue
-        position = geometry.project(point)
-        snapped = geometry.interpolate(position)
-        distance = point.distance(snapped)
-        if distance > tolerance_m:
-            continue
-        fraction = position / geometry.length
-        pk = bounds[0] + fraction * (bounds[1] - bounds[0])
-        candidates.append(
-            PuntoCalibrado(str(row[road_col]), float(pk), snapped, float(distance), index, _branch_value(row, cols, index), source.crs)
-        )
+        start_m, end_m = bounds[0] * 1000.0, bounds[1] * 1000.0
+        for _part, coords, _method in component_coordinates(row, row.geometry, start_m, end_m):
+            located = m_at_point(coords, point)
+            if located is None:
+                continue
+            measured_m, snapped, distance = located
+            if distance <= tolerance_m:
+                candidates.append(
+                    PuntoCalibrado(str(row[road_col]), float(measured_m / 1000.0), snapped, float(distance), index, _branch_value(row, cols, index), source.crs)
+                )
     return candidates
 
 
@@ -124,16 +116,16 @@ def localizar_pk(lineas: gpd.GeoDataFrame, cols: dict[str, str | None], carreter
     for index, row in source.iterrows():
         if str(row.get(road_col)) != carretera:
             continue
-        geometry = _valid_line(row.geometry)
         bounds = _row_pk_bounds(row, m0, m1, scale)
-        if geometry is None or bounds is None:
+        if bounds is None:
             continue
         low, high = sorted(bounds)
         if not low - 1e-9 <= pk <= high + 1e-9 or abs(bounds[1] - bounds[0]) < 1e-12:
             continue
-        fraction = (float(pk) - bounds[0]) / (bounds[1] - bounds[0])
-        snapped = geometry.interpolate(max(0.0, min(1.0, fraction)) * geometry.length)
-        matches.append((_prefer_key(row, index), PuntoCalibrado(carretera, float(pk), snapped, 0.0, index, _branch_value(row, cols, index), source.crs)))
+        for _part, coords, _method in component_coordinates(row, row.geometry, bounds[0] * 1000.0, bounds[1] * 1000.0):
+            snapped = point_at_m(coords, float(pk) * 1000.0)
+            if snapped is not None:
+                matches.append((_prefer_key(row, index), PuntoCalibrado(carretera, float(pk), snapped, 0.0, index, _branch_value(row, cols, index), source.crs)))
     if not matches:
         raise VisorRedError(f"El PK indicado no está calibrado en {carretera}.")
     return min(matches, key=lambda item: item[0])[1]
@@ -152,32 +144,36 @@ def _route_between(
     road_col = cols.get("carretera")
     m0, m1, scale = m_values(source, cols)
     low, high = sorted((pk1, pk2))
-    pieces: list[LineString] = []
+    pieces: list[tuple[float, LineString]] = []
     for index, row in source.iterrows():
         if str(row.get(road_col)) != carretera or _branch_value(row, cols, index) != branch:
             continue
-        geometry = _valid_line(row.geometry)
         bounds = _row_pk_bounds(row, m0, m1, scale)
-        if geometry is None or bounds is None or abs(bounds[1] - bounds[0]) < 1e-12:
+        if bounds is None or abs(bounds[1] - bounds[0]) < 1e-12:
             continue
-        row_low, row_high = sorted(bounds)
-        start, end = max(low, row_low), min(high, row_high)
-        if end - start <= 1e-9:
-            continue
-        d0 = (start - bounds[0]) / (bounds[1] - bounds[0]) * geometry.length
-        d1 = (end - bounds[0]) / (bounds[1] - bounds[0]) * geometry.length
-        part = substring(geometry, d0, d1)
-        if isinstance(part, LineString) and part.length > 0:
-            pieces.append(part)
+        for _component, coords, _method in component_coordinates(row, row.geometry, bounds[0] * 1000.0, bounds[1] * 1000.0):
+            component_bounds = m_range(coords)
+            if component_bounds is None:
+                continue
+            row_low, row_high = (component_bounds[0] / 1000.0, component_bounds[1] / 1000.0)
+            start, end = max(low, row_low), min(high, row_high)
+            if end - start <= 1e-9:
+                continue
+            part = extract_between_m(coords, start * 1000.0, end * 1000.0) if pk1 <= pk2 else extract_between_m(coords, end * 1000.0, start * 1000.0)
+            if isinstance(part, LineString) and part.length > 0:
+                pieces.append((start, part))
     if not pieces:
         return None
-    combined = unary_union(pieces)
-    merged = combined if isinstance(combined, LineString) else linemerge(combined)
-    # A MultiLineString here means that the calibrated pieces do not form one
-    # traversable branch.  Never turn a gap into a fictitious road distance.
-    if not isinstance(merged, LineString):
-        return None
-    return merged, float(sum(piece.length for piece in pieces))
+    pieces.sort(key=lambda item: item[0], reverse=pk1 > pk2)
+    route_coords: list[tuple[float, float]] = []
+    for _start, part in pieces:
+        coords = [(float(x), float(y)) for x, y, *_rest in part.coords]
+        if route_coords and Point(route_coords[-1]).distance(Point(coords[0])) > 0.01:
+            # Never bridge a real geometrical gap simply because M is adjacent.
+            return None
+        route_coords.extend(coords[1:] if route_coords else coords)
+    route = LineString(route_coords)
+    return route, float(route.length)
 
 
 def medir(

@@ -85,6 +85,15 @@ class VisorRedTests(unittest.TestCase):
         self.assertEqual(result["estado"], "ok")
         self.assertAlmostEqual(result["distancia_geometria_m"], 1000, delta=0.01)
 
+    def test_measurement_crosses_contiguous_idvia_change_in_the_same_direction(self) -> None:
+        data = lines([
+            {"ID_ROAD": "A", "IDVIA": "first", "Via_sentido": "A_s_1", "m_from": 662000, "m_to": 662898, "geometry": LineString([(0, 0), (898, 0)])},
+            {"ID_ROAD": "A", "IDVIA": "second", "Via_sentido": "A_s_1", "m_from": 662898, "m_to": 664000, "geometry": LineString([(898, 0), (2000, 0)])},
+        ])
+        result = medir(data, COLS, Point(800, 0), Point(1000, 0), 20)
+        self.assertEqual(result["estado"], "ok")
+        self.assertAlmostEqual(result["distancia_geometria_m"], 200, delta=0.01)
+
     def test_measurement_rejects_disconnected_calibrated_branch(self) -> None:
         data = lines([
             {"ID_ROAD": "A", "Via_sentido": "A_s_1", "m_from": 0, "m_to": 1000, "geometry": LineString([(0, 0), (1000, 0)])},
