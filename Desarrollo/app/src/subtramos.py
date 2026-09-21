@@ -5,8 +5,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .estilos import DIVISION_INTERIOR_PALETTE
+
 TOLERANCIA_KM = 0.002
-DIVISION_COLORS = ("#f4a3a8", "#df7f87")
+DIVISION_COLORS = DIVISION_INTERIOR_PALETTE
 
 
 class DivisionError(ValueError):

@@ -14,11 +14,13 @@ from matplotlib.ticker import AutoMinorLocator, FixedLocator, FuncFormatter, Max
 
 from .estilos import resolver_fuente_mpl
 from .perfiles import _elevation_axis
+from .referenciacion_lineal import distance_at_m
 from .tramo import TramoExtraido
 from .utils import format_pk
 
 
 PROFILE_ANOMALY_COLOR = "#c2b206"
+PROFILE_DIVISION_FILL_PALETTE = ("#9bc8a0", "#4f8f63")
 
 
 def _nice_pk_ticks(start: float, end: float, target: int = 6) -> list[float]:
@@ -72,6 +74,39 @@ def _slope_axis(values: np.ndarray) -> dict[str, Any] | None:
     return {"low": low - margin, "high": high + margin, "ticks": None}
 
 
+def distance_at_pk(distances: np.ndarray, pk_values: np.ndarray, pk: float) -> float:
+    """Interpolate the measured distance↔PK relation without global linearisation."""
+    distance_array = np.asarray(distances, dtype=float)
+    pk_array = np.asarray(pk_values, dtype=float)
+    valid = np.isfinite(distance_array) & np.isfinite(pk_array)
+    if not np.any(valid):
+        raise ValueError("No hay relación válida entre distancia y PK.")
+    pairs = sorted(zip(pk_array[valid], distance_array[valid]), key=lambda item: item[0])
+    sorted_pk = np.asarray([item[0] for item in pairs], dtype=float)
+    sorted_distance = np.asarray([item[1] for item in pairs], dtype=float)
+    target = float(pk)
+    if target < sorted_pk[0] - 1e-9 or target > sorted_pk[-1] + 1e-9:
+        raise ValueError("El PK está fuera del perfil.")
+    return float(np.interp(target, sorted_pk, sorted_distance))
+
+
+def _distance_for_pk(tramo: TramoExtraido, x: np.ndarray, pk_values: np.ndarray, pk: float) -> float:
+    if len(tramo.calibracion_distancia_m) >= 2:
+        return distance_at_m(tramo.calibracion_distancia_m, float(pk) * 1000.0)
+    return distance_at_pk(x, pk_values, pk)
+
+
+def division_fill_arrays(x: np.ndarray, z: np.ndarray, start: float, end: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return the exact polygon vertices for one physical span of a profile."""
+    low, high = sorted((float(start), float(end)))
+    if high <= low:
+        raise ValueError("La división debe tener una extensión física positiva.")
+    interior = (x > low) & (x < high)
+    x_part = np.concatenate(([low], x[interior], [high]))
+    z_part = np.concatenate(([np.interp(low, x, z)], z[interior], [np.interp(high, x, z)]))
+    return x_part, z_part
+
+
 def exportar_perfil(
     df: pd.DataFrame,
     output_base: Path,
@@ -93,7 +128,8 @@ def exportar_perfil(
         "axes.linewidth": 0.85,
     })
     fig, ax = plt.subplots(figsize=(10.8, 4.6), dpi=240)
-    x = df["pk"].to_numpy(dtype=float)
+    x = df["distancia_m"].to_numpy(dtype=float)
+    pk_values = df["pk"].to_numpy(dtype=float)
     z = df["cota_suavizada_m"].to_numpy(dtype=float)
     raw = df["cota_bruta_m"].to_numpy(dtype=float)
     y_axis = _elevation_axis(z, modo_eje_y)
@@ -102,17 +138,20 @@ def exportar_perfil(
     parts = list(divisiones or [])
     if len(parts) > 1:
         for part in parts:
-            low, high = sorted((float(part["pk_inicio"]), float(part["pk_fin"])))
-            mask = (x >= low) & (x <= high)
-            ax.fill_between(x, z, zmin, where=mask, interpolate=True, color=("#7cad83" if int(part["indice"]) % 2 else "#5f956d"), alpha=0.32, linewidth=0)
+            start = _distance_for_pk(tramo, x, pk_values, float(part["pk_inicio"]))
+            end = _distance_for_pk(tramo, x, pk_values, float(part["pk_fin"]))
+            x_part, z_part = division_fill_arrays(x, z, start, end)
+            color = PROFILE_DIVISION_FILL_PALETTE[(int(part["indice"]) - 1) % len(PROFILE_DIVISION_FILL_PALETTE)]
+            ax.fill_between(x_part, z_part, zmin, color=color, alpha=0.32, linewidth=0)
     else:
-        ax.fill_between(x, z, zmin, color="#7cad83", alpha=0.32, linewidth=0)
+        ax.fill_between(x, z, zmin, color=PROFILE_DIVISION_FILL_PALETTE[0], alpha=0.32, linewidth=0)
     ax.plot(x, z, color="#255f3c", linewidth=2.0, zorder=3)
     if mostrar_linea_muestreada_elevaciones:
         ax.plot(x, raw, color="#6f8f77", linewidth=0.7, alpha=0.42, zorder=2)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: f"{value:g} m"))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: format_pk(value)))
-    ax.set_xticks(_nice_pk_ticks(float(x[0]), float(x[-1])))
+    tick_pks = _nice_pk_ticks(float(pk_values[0]), float(pk_values[-1]))
+    tick_positions = [_distance_for_pk(tramo, x, pk_values, value) for value in tick_pks]
+    ax.set_xticks(tick_positions, [format_pk(value) for value in tick_pks])
     ax.xaxis.set_minor_locator(AutoMinorLocator(2))
     ax.yaxis.set_minor_locator(AutoMinorLocator(2))
     ax.set_xlabel("")
@@ -121,7 +160,7 @@ def exportar_perfil(
     ax.grid(True, which="minor", color="#d3dce3", linewidth=0.42, alpha=0.42)
     ax.set_facecolor("#fbfcfb")
     fig.patch.set_facecolor("#ffffff")
-    ax.set_xlim(float(x[0]), float(x[-1]))
+    ax.set_xlim(float(np.min(x)), float(np.max(x)))
     for label in ax.get_xticklabels():
         label.set_rotation(24)
         label.set_ha("right")

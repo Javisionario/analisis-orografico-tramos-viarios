@@ -12,7 +12,7 @@ from shapely.geometry import LineString, MultiLineString, Point
 ROOT = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(ROOT))
 
-from src.referenciacion_lineal import component_coordinates, extract_between_m_with_calibration, m_at_distance, m_at_point, measured_parts_from_gpkg, point_at_m, row_coords  # noqa: E402
+from src.referenciacion_lineal import component_coordinates, distance_at_m, extract_between_m_with_calibration, m_at_distance, m_at_point, measured_parts_from_gpkg, point_at_m, row_coords  # noqa: E402
 from src.tramo import extraer_tramo  # noqa: E402
 from src.tramo import TramoExtraido  # noqa: E402
 from src.perfiles import generar_perfil  # noqa: E402
@@ -73,6 +73,10 @@ class MeasuredLinearReferencingTests(unittest.TestCase):
     def test_outside_calibration_is_not_silently_clamped(self) -> None:
         with self.assertRaises(ValueError):
             m_at_distance([(0, 0), (100, 100)], -0.1)
+
+    def test_distance_at_m_uses_the_real_non_proportional_calibration(self) -> None:
+        self.assertEqual(distance_at_m([(0, 0), (100, 900), (1000, 1000)], 900), 100)
+        self.assertEqual(distance_at_m([(0, 1000), (900, 900), (1000, 0)], 900), 900)
 
     def test_z_only_wkb_is_not_misidentified_as_measured(self) -> None:
         wkb = to_wkb(LineString([(0, 0, 1), (10, 0, 2)]), output_dimension=3)

@@ -50,7 +50,7 @@ from .compositor_cartografico_pil import (
     text_size,
 )
 from .basemaps import TILE_ERROR_SAMPLES, TILE_ERRORS, render_report_basemap
-from .estilos import slope_classes
+from .estilos import DIVISION_INTERIOR_PALETTE, slope_classes
 from .io_datos import normalize_road_name
 from .relieve import _draw_contours, _prepared_raster_for_map, _render_elevation_overlay
 from .tramo import TramoExtraido
@@ -59,7 +59,6 @@ from .utils import as_float, format_pk
 
 STUDY_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 STUDY_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
-DIVISION_INTERIOR_PALETTE = ("#f4a3a8", "#df7f87")
 SLOPE_LINE_WIDTHS_OLD = {"borde": 22, "centro": 13}
 SLOPE_LINE_WIDTHS_NEW = {"borde": 44, "centro": 26}
 
@@ -720,7 +719,7 @@ def generar_mapa_localizacion(
     if elevation_meta.get("elevaciones_renderizadas"):
         rows.append(("Elevaciones", "", "heading"))
         rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
-    draw_legend_rows(draw, legend_y, rows)
+    draw_legend_rows(draw, legend_y, rows, divided_palette=DIVISION_INTERIOR_PALETTE)
     return _finish(
         canvas,
         output_base,
@@ -842,7 +841,7 @@ def generar_mapa_localizacion_multitramo(
     if elevation_meta.get("elevaciones_renderizadas"):
         rows.append(("Elevaciones", "", "heading"))
         rows.extend((item["label"], item.get("color", "#e5f1e3"), "slope") for item in elevation_meta.get("elevaciones_clases", []))
-    draw_legend_rows(draw, legend_y, rows)
+    draw_legend_rows(draw, legend_y, rows, divided_palette=DIVISION_INTERIOR_PALETTE)
     return _finish(
         canvas, output_base, warnings, timings, base_ok, loc_base_ok,
         {"pks_mapa": configs, "vias_fondo_modo": vias_fondo_modo, "numero_scopes": len(tramos),

@@ -80,7 +80,7 @@ class DivisionHelperTests(unittest.TestCase):
             normalizar_divisiones(10, 20, [15, 15.001])
 
     def test_division_palette_alternates(self) -> None:
-        self.assertEqual(DIVISION_INTERIOR_PALETTE, ("#f4a3a8", "#df7f87"))
+        self.assertEqual(DIVISION_INTERIOR_PALETTE, ("#f2a6ac", "#cf626d"))
 
 
 class MultiSegmentMapHelpersTests(unittest.TestCase):

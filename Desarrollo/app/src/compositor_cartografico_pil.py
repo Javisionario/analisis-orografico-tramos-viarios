@@ -6,6 +6,7 @@ from typing import Any, Callable
 from PIL import Image, ImageDraw, ImageFont
 
 from .basemaps import DEFAULT_MAP_BASE, TILE_CACHE, WORLD_MERCATOR_METRES, lonlat_from_mercator, mercator, tile_provider
+from .estilos import DIVISION_INTERIOR_PALETTE
 
 MAP_DPI = 600
 
@@ -453,6 +454,7 @@ def draw_legend_rows(
     draw: ImageDraw.ImageDraw,
     start_y: int,
     rows: list[tuple[str, str, str]],
+    divided_palette: tuple[str, str] | None = None,
 ) -> None:
     if not rows:
         return
@@ -463,6 +465,7 @@ def draw_legend_rows(
     line_step = MAP_LEGEND_LINE_STEP_PX
     row_min = MAP_LEGEND_ROW_MIN_PX
     font = pil_font(font_size, bold=False)
+    palette = divided_palette or DIVISION_INTERIOR_PALETTE
     prepared = [(label, color, style, wrap_words(label, MAP_LEGEND_WRAP_CHARS)) for label, color, style in rows]
     height = sum(max(row_min, line_step * len(lines) + 34) for _label, _color, _style, lines in prepared)
     if start_y + height > scale_label_top - MAP_LEGEND_SCALE_MIN_GAP_PX:
@@ -482,8 +485,8 @@ def draw_legend_rows(
         elif style == "divided_line":
             left, top, right, bottom = loc_x + 34, y - 22, loc_x + 100, y + 6
             middle = (left + right) // 2
-            draw.rectangle((left, top, middle, bottom), fill="#f4a3a8")
-            draw.rectangle((middle, top, right, bottom), fill="#df7f87")
+            draw.rectangle((left, top, middle, bottom), fill=palette[0])
+            draw.rectangle((middle, top, right, bottom), fill=palette[1])
             draw.rectangle((left, top, right, bottom), outline="#7f1d1d", width=3)
         elif style == "slope":
             draw.rectangle((loc_x + 34, y - 28, loc_x + 100, y + 12), fill=color, outline="#ffffff", width=2)

@@ -9,6 +9,9 @@ import numpy as np
 
 ELEVATION_STEPS = [10, 20, 50, 100, 200, 500]
 
+# Common inner colours for every visual representation of a divided route.
+DIVISION_INTERIOR_PALETTE = ("#f2a6ac", "#cf626d")
+
 
 @lru_cache(maxsize=1)
 def resolver_fuente_mpl() -> str:

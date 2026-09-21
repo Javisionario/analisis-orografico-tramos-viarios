@@ -177,3 +177,24 @@ def m_at_distance(calibration: list[tuple[float, float]], distance: float, toler
         if d0 - tolerance <= distance <= d1 + tolerance and d1 > d0:
             return m0 + (m1 - m0) * (distance - d0) / (d1 - d0)
     raise ValueError("La calibración distancia-M contiene un hueco.")
+
+
+def distance_at_m(calibration: list[tuple[float, float]], m: float, tolerance: float = 1e-6) -> float:
+    """Return physical distance at M, preserving either calibration direction."""
+    if len(calibration) < 2:
+        raise ValueError("No hay calibración distancia-M suficiente.")
+    value = float(m)
+    first_d, first_m = calibration[0]
+    last_d, last_m = calibration[-1]
+    low_m, high_m = sorted((first_m, last_m))
+    if value < low_m - tolerance or value > high_m + tolerance:
+        raise ValueError("M fuera del intervalo calibrado.")
+    if abs(value - first_m) <= tolerance:
+        return float(first_d)
+    if abs(value - last_m) <= tolerance:
+        return float(last_d)
+    for (d0, m0), (d1, m1) in zip(calibration, calibration[1:]):
+        low, high = sorted((m0, m1))
+        if low - tolerance <= value <= high + tolerance and abs(m1 - m0) > tolerance:
+            return float(d0 + (d1 - d0) * (value - m0) / (m1 - m0))
+    raise ValueError("La calibración distancia-M contiene un hueco.")
