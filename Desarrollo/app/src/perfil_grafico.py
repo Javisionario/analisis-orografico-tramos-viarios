@@ -21,6 +21,7 @@ from .utils import format_pk
 
 PROFILE_ANOMALY_COLOR = "#c2b206"
 PROFILE_DIVISION_FILL_PALETTE = ("#9bc8a0", "#4f8f63")
+PK_TICK_EPSILON = 1e-9
 
 
 def _nice_pk_ticks(start: float, end: float, target: int = 6) -> list[float]:
@@ -38,10 +39,24 @@ def _nice_pk_ticks(start: float, end: float, target: int = 6) -> list[float]:
     first = np.ceil(lo / step) * step
     ticks: list[float] = []
     value = first
-    while value <= hi + step * 0.25:
+    while value <= hi + PK_TICK_EPSILON:
         ticks.append(round(float(value), 6))
         value += step
     return ticks or [lo, hi]
+
+
+def _profile_tick_pks(tramo: TramoExtraido, pk_values: np.ndarray) -> list[float]:
+    """Return nice labels that remain inside the profile's calibrated PK domain."""
+    if len(tramo.calibracion_distancia_m) >= 2:
+        calibrated_pks = [float(measure) / 1000.0 for _distance, measure in tramo.calibracion_distancia_m]
+        lo, hi = min(calibrated_pks), max(calibrated_pks)
+    else:
+        finite_pks = np.asarray(pk_values, dtype=float)
+        finite_pks = finite_pks[np.isfinite(finite_pks)]
+        if not len(finite_pks):
+            return []
+        lo, hi = float(np.min(finite_pks)), float(np.max(finite_pks))
+    return [value for value in _nice_pk_ticks(lo, hi) if lo <= value <= hi]
 
 
 def _slope_color(value: float) -> str:
@@ -149,7 +164,7 @@ def exportar_perfil(
     if mostrar_linea_muestreada_elevaciones:
         ax.plot(x, raw, color="#6f8f77", linewidth=0.7, alpha=0.42, zorder=2)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: f"{value:g} m"))
-    tick_pks = _nice_pk_ticks(float(pk_values[0]), float(pk_values[-1]))
+    tick_pks = _profile_tick_pks(tramo, pk_values)
     tick_positions = [_distance_for_pk(tramo, x, pk_values, value) for value in tick_pks]
     ax.set_xticks(tick_positions, [format_pk(value) for value in tick_pks])
     ax.yaxis.set_minor_locator(AutoMinorLocator(2))

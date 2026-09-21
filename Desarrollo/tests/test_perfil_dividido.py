@@ -16,12 +16,36 @@ sys.path.insert(0, str(ROOT))
 
 from src.estilos import DIVISION_INTERIOR_PALETTE  # noqa: E402
 from src.mapas import DIVISION_INTERIOR_PALETTE as MAP_PALETTE  # noqa: E402
-from src.perfil_grafico import PROFILE_DIVISION_FILL_PALETTE, distance_at_pk, division_fill_arrays, exportar_perfil  # noqa: E402
+from src.perfil_grafico import PROFILE_DIVISION_FILL_PALETTE, _nice_pk_ticks, _profile_tick_pks, distance_at_pk, division_fill_arrays, exportar_perfil  # noqa: E402
+from src.referenciacion_lineal import distance_at_m  # noqa: E402
 from src.subtramos import DIVISION_COLORS  # noqa: E402
 from src.tramo import TramoExtraido  # noqa: E402
 
 
 class DividedProfileTests(unittest.TestCase):
+    def test_nice_pk_ticks_never_extend_past_the_ap6_profile_range(self) -> None:
+        ticks = _nice_pk_ticks(43.020, 69.648)
+        self.assertEqual(ticks, [45.0, 50.0, 55.0, 60.0, 65.0])
+        self.assertNotIn(70.0, ticks)
+
+    def test_nice_pk_ticks_keep_valid_limits_for_increasing_and_decreasing_profiles(self) -> None:
+        for start, end in ((42.472, 70.924), (69.648, 43.020), (10.100, 19.900), (43.0, 70.0), (10.101, 10.149)):
+            ticks = _nice_pk_ticks(start, end)
+            lo, hi = sorted((start, end))
+            self.assertTrue(all(lo <= value <= hi for value in ticks))
+        self.assertIn(70.0, _nice_pk_ticks(42.472, 70.924))
+        self.assertIn(70.0, _nice_pk_ticks(43.0, 70.0))
+
+    def test_profile_tick_filter_uses_calibration_before_pk_to_distance(self) -> None:
+        tramo = TramoExtraido(
+            "AP-6", "creciente", 43.020, 69.648, 43.020, 69.648, 43.020, 69.648, 1000.0,
+            LineString([(0, 0), (1000, 0)]), "EPSG:25830", [], {}, [(0.0, 43020.0), (1000.0, 69648.0)],
+        )
+        ticks = _profile_tick_pks(tramo, np.array([42.472, 70.924]))
+        self.assertEqual(ticks, [45.0, 50.0, 55.0, 60.0, 65.0])
+        with self.assertRaisesRegex(ValueError, "M fuera del intervalo calibrado"):
+            distance_at_m(tramo.calibracion_distancia_m, 70000.0)
+
     def test_pk_tick_uses_measured_distance_not_global_fraction(self) -> None:
         distances = np.array([0.0, 100.0, 1000.0])
         pks = np.array([0.0, 0.9, 1.0])
